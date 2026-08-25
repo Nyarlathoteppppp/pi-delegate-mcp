@@ -53,8 +53,22 @@ jobs:
             exit 1
           fi
 
+      # Re-tagging a version already on the registry should be a no-op, not a red run.
+      # This also makes re-running a half-finished release safe.
+      - name: Is this version already published?
+        id: check
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          if npm view "${name}@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${GITHUB_REF_NAME} is already on the registry, skipping publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # No NODE_AUTH_TOKEN. OIDC handles auth, and provenance attestation is automatic.
-      - run: npm publish
+      - if: steps.check.outputs.skip != 'true'
+        run: npm publish
 
       - name: GitHub release
         env:
