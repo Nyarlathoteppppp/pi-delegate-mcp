@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pi": {
+      "command": "npx",
+      "args": ["-y", "pi-delegate-mcp"],
+      "env": { "PI_DELEGATE_MODEL": "openrouter/stealth/ox-alpha" },
+      "timeout": 1800000
+    }
+  }
+}

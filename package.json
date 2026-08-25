@@ -1,0 +1,60 @@
+{
+  "name": "pi-delegate-mcp",
+  "version": "0.1.0",
+  "description": "MCP server exposing the pi coding agent as a delegable, steerable worker",
+  "type": "module",
+  "bin": {
+    "pi-delegate-mcp": "src/index.mjs",
+    "pi-delegate-statusline": "bin/statusline.mjs"
+  },
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./worker": "./src/worker.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "test:ci": "node test/launch.mjs node src/index.mjs",
+    "test": "for t in guard perm id scope init nopi smoke trace model; do echo \"== $t\"; node test/$t.mjs || exit 1; done",
+    "prepublishOnly": "npm run test:ci"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "howznguyen <howznguyen@knowns.dev>",
+  "license": "MIT",
+  "homepage": "https://github.com/howznguyen/pi-delegate-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/howznguyen/pi-delegate-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/howznguyen/pi-delegate-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "pi",
+    "pi-coding-agent",
+    "coding-agent",
+    "subagent",
+    "delegate",
+    "claude-code",
+    "llm",
+    "openrouter",
+    "deepseek",
+    "grok",
+    "codex"
+  ],
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.3",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  }
+}
