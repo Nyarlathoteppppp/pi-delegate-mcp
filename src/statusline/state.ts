@@ -1,24 +1,25 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { homedir, tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { STATE_DIR } from "../config.js";
+import type { PiWorker } from "../pi/worker.js";
+import type { StateFile } from "../types.js";
+
+export { STATE_DIR };
 
 /**
  * The status line runs as a separate process, so live session state has to reach it
  * through the filesystem. One file per server instance, named by pid; readers treat a
  * file whose pid is gone as stale.
  */
-export const STATE_DIR =
-  process.env.PI_DELEGATE_STATE_DIR ||
-  join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "pi-delegate-mcp");
-
 const FILE = join(STATE_DIR, `${process.pid}.json`);
 const WRITE_THROTTLE_MS = 250;
 
-let pending;
-let timer;
+let pending: StateFile | undefined;
+let timer: NodeJS.Timeout | undefined;
 
-function flush() {
+function flush(): void {
   timer = undefined;
   const payload = pending;
   pending = undefined;
@@ -36,7 +37,7 @@ function flush() {
   }
 }
 
-export function publish(sessions) {
+export function publish(sessions: Iterable<PiWorker>): void {
   pending = {
     pid: process.pid,
     // The host that launched this server. A status line spawned by the same host finds
@@ -51,22 +52,24 @@ export function publish(sessions) {
       model: w.model,
       cwd: w.cwd,
       turns: w.turns,
-      questions: w.questions?.size ?? 0,
+      questions: w.questions.size,
       startedAt: w.startedAt,
     })),
   };
-  timer ??= setTimeout(flush, WRITE_THROTTLE_MS).unref?.() ?? setTimeout(flush, WRITE_THROTTLE_MS);
+  timer ??= setTimeout(flush, WRITE_THROTTLE_MS).unref();
 }
 
-export function cleanup() {
+export function cleanup(): void {
   try {
     rmSync(FILE, { force: true });
-  } catch {}
+  } catch {
+    // Exiting anyway.
+  }
 }
 
 /** Walk up from a pid, collecting ancestors. Used to match a server to its host. */
-export function ancestors(startPid = process.pid, depth = 8) {
-  const chain = [];
+export function ancestors(startPid: number = process.pid, depth = 8): number[] {
+  const chain: number[] = [];
   let pid = startPid;
   for (let i = 0; i < depth && pid > 1; i++) {
     chain.push(pid);
@@ -83,14 +86,14 @@ export function ancestors(startPid = process.pid, depth = 8) {
 }
 
 /** Read every live server's state, dropping files whose process is gone. */
-export function readAll() {
-  let names;
+export function readAll(): StateFile[] {
+  let names: string[];
   try {
     names = readdirSync(STATE_DIR);
   } catch {
     return [];
   }
-  const out = [];
+  const out: StateFile[] = [];
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     const pid = Number(name.slice(0, -5));
@@ -98,16 +101,18 @@ export function readAll() {
       process.kill(pid, 0);
     } catch (err) {
       // ESRCH means the process is gone. EPERM means it exists but belongs to another
-      // user, so it is still alive and the file stays. Treating EPERM as dead would delete live
-      // state whenever a server runs under a different account.
-      if (err?.code === "ESRCH") {
+      // user, so it is still alive and the file stays. Treating EPERM as dead would
+      // delete live state whenever a server runs under a different account.
+      if ((err as NodeJS.ErrnoException)?.code === "ESRCH") {
         rmSync(join(STATE_DIR, name), { force: true });
         continue;
       }
     }
     try {
-      out.push(JSON.parse(readFileSync(join(STATE_DIR, name), "utf8")));
-    } catch {}
+      out.push(JSON.parse(readFileSync(join(STATE_DIR, name), "utf8")) as StateFile);
+    } catch {
+      // A truncated or foreign file is not worth failing a status line over.
+    }
   }
   return out;
 }

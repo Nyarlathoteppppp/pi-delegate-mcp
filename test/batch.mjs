@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 const c = new Client({ name: "batch", version: "0" });
-await c.connect(new StdioClientTransport({ command: "node", args: ["src/index.mjs"] }));
+await c.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"] }));
 const raw = (n, a = {}) => c.callTool({ name: n, arguments: a });
 const call = async (n, a = {}) => JSON.parse((await raw(n, a)).content[0].text);
 await call("init");

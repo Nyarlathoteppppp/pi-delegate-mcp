@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 const c = new Client({ name: "guard", version: "0" });
-await c.connect(new StdioClientTransport({ command: "node", args: ["src/index.mjs"] }));
+await c.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"] }));
 await c.callTool({ name: "init", arguments: {} });
 const raw = (n, a) => c.callTool({ name: n, arguments: a });
 

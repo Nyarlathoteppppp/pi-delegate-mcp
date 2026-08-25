@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ancestors, readAll, STATE_DIR } from "../src/state.mjs";
+import { ancestors, readAll, STATE_DIR } from "../dist/statusline/state.js";
 
 const CWD = "/tmp";
 const ANSI = new RegExp("\\u001b\\[\\d+m", "g");

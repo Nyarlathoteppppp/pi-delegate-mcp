@@ -82,7 +82,8 @@ enforce.)
 | `run`         | Delegate and block until done. For quick questions only.                                                                                |
 | `status`      | State, turns, tools used, latest text, and pending questions.                                                                           |
 | `steer`       | Redirect a running agent. Lands after its current tool call.                                                                            |
-| `answer`      | Answer a question surfaced by `status`.                                                                                                 |
+| `follow_up`   | Give a finished delegate another turn. It keeps everything it read, so you do not re-explain the task.                                   |
+| `answer`      | Answer a question surfaced by `status`. Only reachable with `extensions: true`, since only extensions can ask.                           |
 | `abort`       | Stop a session; partial output stays readable.                                                                                          |
 | `init`        | **Call first.** Reports permitted tools, usable models, recipes. Everything else refuses until it runs.                                 |
 | `models`      | List models this delegate may use.                                                                                                      |
@@ -132,7 +133,7 @@ Keep the server key short, since it prefixes every tool name (`mcp__pi__spawn`).
 
 ```bash
 git clone https://github.com/howznguyen/pi-delegate-mcp && cd pi-delegate-mcp
-npm install && npm link
+npm install && npm run build && npm link
 ```
 
 ## Traceability
@@ -173,6 +174,29 @@ timing. Add `verbose: true` for call ids and results:
 Arguments and results are clipped (`PI_DELEGATE_TRACE_ARGS`, `PI_DELEGATE_TRACE_RESULT`) with the
 dropped length recorded, so one `read` of a large file cannot flood your context.
 
+## Giving a delegate another turn
+
+A finished delegate is not spent. pi keeps its session in memory, so `follow_up` re-prompts
+the same agent with everything it already read still in context:
+
+```json
+{ "sessionId": "search-audit-01", "prompt": "Now check whether the build files reference it too" }
+```
+
+```
+turn 1  ->  "STORED"
+follow_up   { "sessionId": "quiz", "state": "running", "turnsSoFar": 1 }
+turn 2  ->  "4271"
+```
+
+This is the cheap way to have a conversation with a delegate. Spawning a fresh one means
+re-explaining the task and paying for it to re-read the same files, and its answer arrives
+with none of the reasoning that led there.
+
+`follow_up` refuses a delegate that is still working, because redirecting one mid-task is
+what `steer` is for. The two are not interchangeable: `steer` lands between tool calls on a
+running agent, `follow_up` starts a new turn on a finished one.
+
 ## Fanning out
 
 `spawn_batch` starts a whole batch in one call. Tasks inherit the batch-level `model`, `cwd`,
@@ -209,17 +233,33 @@ Poll the whole batch with one `sessions` call rather than one `status` per deleg
 
 ## Picking a model per call
 
-`model` on any call overrides `PI_DELEGATE_MODEL`, and reaches every provider pi is configured
-for, not just the ones in pi's `enabledModels`, which only scopes pi's own interactive picker:
+`model` on any call overrides `PI_DELEGATE_MODEL`. An unresolvable name is a hard error, never a
+silent fallback to the default model, because a silent fallback is how you end up billing a model
+you never asked for.
+
+Which names resolve is decided by pi's own `enabledModels` scope, which this server enforces
+rather than merely displays:
 
 ```
-opencode-go/glm-5.3            -> ok
-openrouter/deepseek/deepseek-v3.2 -> ok
-opencode-go/kimi-k3            -> ok
+opencode-go/deepseek-v4-flash  -> ok      (listed in enabledModels)
+opencode-go/glm-5.3            -> refused (out of scope)
+knowns-hub/claude-opus         -> ok      (custom provider, see below)
 ```
 
-An unresolvable name is a hard error, never a silent fallback to the default model. Call
-`models` to see what is reachable.
+**Custom providers bypass the scope.** Any model served by a provider declared in
+`~/.pi/agent/models.json` is offered even when `enabledModels` does not name it, on the grounds
+that declaring a provider by hand is already an intent to use it. This is why the list can be
+much longer than `enabledModels`: three entries in the scope plus two custom providers can easily
+mean fifteen offered models. `init` says so explicitly in `models.scopeNote` when it applies.
+
+Two switches change that:
+
+| | Effect |
+|---|---|
+| `PI_DELEGATE_STRICT_SCOPE=1` | Honour `enabledModels` exactly. The custom-provider bypass is dropped. |
+| `PI_DELEGATE_IGNORE_SCOPE=1` | Drop scoping altogether. Every authenticated model is usable. |
+
+Call `models` to see what is actually reachable under whichever setting is in force.
 
 ## Status line
 
@@ -326,11 +366,11 @@ on by default. It also costs real startup time, which is why it is off unless as
 | `PI_DELEGATE_TRACE_RESULT`    | `600`            | Max chars of tool results kept in the trace                              |
 | `PI_DELEGATE_BATCH_MAX`       | `10`             | Ceiling on tasks per `spawn_batch` call                                  |
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
-| `PI_DELEGATE_IGNORE_SCOPE`    | unset            | `1` ignores pi's `enabledModels` scope                                   |
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Where status-line state is published                                     |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run`                              |
 | `PI_DELEGATE_IGNORE_SCOPE`    | unset            | `1` ignores pi's `enabledModels` scope, allowing any configured model    |
+| `PI_DELEGATE_STRICT_SCOPE`    | unset            | `1` honours `enabledModels` exactly, dropping the custom-provider bypass |
 | `PI_CODING_AGENT_DIR`         | `~/.pi/agent`    | Where pi's `auth.json` and config are read from                          |
 
 ## Long-running work

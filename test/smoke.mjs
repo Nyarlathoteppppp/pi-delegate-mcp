@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const client = new Client({ name: "smoke", version: "0" });
-await client.connect(new StdioClientTransport({ command: "node", args: ["src/index.mjs"] }));
+await client.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"] }));
 
 const { tools } = await client.listTools();
 await client.callTool({ name: "init", arguments: {} });

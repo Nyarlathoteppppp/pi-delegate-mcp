@@ -4,22 +4,27 @@
   "description": "MCP server exposing the pi coding agent as a delegable, steerable worker",
   "type": "module",
   "bin": {
-    "pi-delegate-mcp": "src/index.mjs",
-    "pi-delegate-statusline": "bin/statusline.mjs"
+    "pi-delegate-mcp": "dist/index.js",
+    "pi-delegate-statusline": "dist/statusline/cli.js"
   },
-  "main": "src/index.mjs",
+  "main": "dist/index.js",
   "exports": {
-    ".": "./src/index.mjs",
-    "./worker": "./src/worker.mjs",
+    ".": "./dist/index.js",
+    "./worker": "./dist/pi/worker.js",
+    "./statusline": "./dist/statusline/state.js",
     "./package.json": "./package.json"
   },
   "files": [
-    "src",
-    "bin",
-    "README.md"
+    "dist",
+    "!dist/**/*.map",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "test:ci": "node test/launch.mjs node src/index.mjs",
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test:ci": "npm run build && node test/launch.mjs node dist/index.js",
     "test": "for t in guard perm id scope init nopi smoke trace model; do echo \"== $t\"; node test/$t.mjs || exit 1; done",
     "prepublishOnly": "npm run test:ci"
   },
@@ -56,5 +61,10 @@
     "@earendil-works/pi-coding-agent": "^0.84.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
+  },
+  "types": "dist/index.d.ts",
+  "devDependencies": {
+    "@types/node": "^26.3.0",
+    "typescript": "^7.0.2"
   }
 }

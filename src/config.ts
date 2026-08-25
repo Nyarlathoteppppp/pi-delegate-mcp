@@ -1,0 +1,73 @@
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+/**
+ * Every environment variable this server reads, in one place. Scattering `process.env`
+ * across modules is how the table in the README drifts out of date.
+ */
+
+interface PackageJson {
+  name: string;
+  version: string;
+}
+
+/** Single source of truth for the version the MCP handshake reports. */
+const pkg = createRequire(import.meta.url)("../package.json") as PackageJson;
+
+export const PKG_NAME = pkg.name;
+export const PKG_VERSION = pkg.version;
+
+const num = (value: string | undefined, fallback: number): number => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+/** Where pi keeps auth.json, settings.json and extensions. */
+export const AGENT_DIR = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+
+/**
+ * Opt-in escape hatches. Without one, the delegate can never write, edit, or run shell.
+ *
+ * Neither is a sandbox. pi has no permission system, so granting `bash` grants every
+ * capability the user running this server has, writes included.
+ */
+export const ALLOW_ALL = process.env.PI_DELEGATE_ALLOW_WRITE === "1";
+export const ALLOW_EXTRA = (process.env.PI_DELEGATE_ALLOW_TOOLS || "")
+  .split(",")
+  .map((t) => t.trim())
+  .filter(Boolean);
+
+/** Model used when a call omits `model`. Undefined means pi's own configured default. */
+export const DEFAULT_MODEL = process.env.PI_DELEGATE_MODEL || undefined;
+
+/** Ignore pi's enabledModels scope entirely. */
+export const IGNORE_SCOPE = process.env.PI_DELEGATE_IGNORE_SCOPE === "1";
+
+/**
+ * Honour enabledModels exactly. Off by default, which lets every model of a custom
+ * provider through on the grounds that declaring one by hand is already an intent to use
+ * it. Turn this on when you want the offered list to match enabledModels and nothing more.
+ */
+export const STRICT_SCOPE = process.env.PI_DELEGATE_STRICT_SCOPE === "1";
+
+/** Finished sessions stay readable for later review; oldest are evicted first. */
+export const HISTORY_LIMIT = num(process.env.PI_DELEGATE_HISTORY, 50);
+
+/** Ceiling on one `spawn_batch` call. A fan-out this wide is usually a planning mistake. */
+export const BATCH_MAX = num(process.env.PI_DELEGATE_BATCH_MAX, 10);
+
+/** Above this, `init` summarises models by provider instead of dumping every ref. */
+export const LIST_CAP = num(process.env.PI_DELEGATE_LIST_CAP, 60);
+
+/** Progress notification interval during `run`, which resets the host's request timeout. */
+export const PROGRESS_MS = num(process.env.PI_DELEGATE_PROGRESS_MS, 15_000);
+
+/** Tool arguments and results are clipped before entering the trace. */
+export const TRACE_ARGS = num(process.env.PI_DELEGATE_TRACE_ARGS, 400);
+export const TRACE_RESULT = num(process.env.PI_DELEGATE_TRACE_RESULT, 600);
+
+/** Where the status line reads live session state from. */
+export const STATE_DIR =
+  process.env.PI_DELEGATE_STATE_DIR ||
+  join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "pi-delegate-mcp");
