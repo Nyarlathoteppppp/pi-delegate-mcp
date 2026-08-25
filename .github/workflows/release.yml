@@ -12,8 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Covers the floor declared in package.json engines (>=20), not just what CI happens to ship.
-        node: ["20", "22", "24"]
+        # Covers the floor declared in package.json engines, not just what CI happens to ship.
+        # pi imports fs.globSync, which does not exist before Node 22, so 20 cannot work.
+        node: ["22", "24"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

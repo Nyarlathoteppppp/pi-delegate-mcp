@@ -94,7 +94,7 @@ enforce.)
 
 ## Install
 
-Requires Node.js 20+ and a working [pi](https://pi.dev) install that has been logged in once
+Requires Node.js 22.19+ and a working [pi](https://pi.dev) install that has been logged in once
 (`pi`, then `/login`).
 
 ### Claude Code
