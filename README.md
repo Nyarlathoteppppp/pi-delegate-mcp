@@ -52,7 +52,7 @@ agent from another program close both.
 | --------------------------- | ---------------------- | ------------------------------------ | -------------------------- |
 | Runs in-process             | no (subprocess)        | no (HTTP client to `opencode serve`) | yes (`createAgentSession`) |
 | Redirect a running turn     | no                     | `abort` only                         | `steer`                    |
-| Agent can ask you something | no (`ctx.hasUI` false) | not in the session API               | `status` → `answer`        |
+| Agent can ask you something | no (`ctx.hasUI` false) | not in the session API               | `status` → `answer` \*      |
 | Model per call              | no                     | yes                                  | `model` argument           |
 
 `pi -p` and `--mode json` set `ctx.hasUI = false`. A delegate started that way is fire-and-forget
@@ -67,6 +67,9 @@ pi ships `createAgentSession` as an embeddable library. This server holds the se
 in-process, so `session.steer()` can land a message after the current tool call and before the
 next model call, and a synthetic `uiContext` catches the agent's questions and parks them for
 `answer`. Nothing is shelled out; nothing has to be supervised.
+
+\* Questions come from pi extensions, so that channel is open only for delegates spawned with
+`extensions: true`. See [Web search and other extension tools](#web-search-and-other-extension-tools).
 
 (The table compares the _delegation channel_, not sandboxing; opencode has its own permission
 config. See [Read-only by default](#read-only-by-default) for what this server does and does not
@@ -85,7 +88,6 @@ enforce.)
 | `follow_up`   | Give a finished delegate another turn. It keeps everything it read, so you do not re-explain the task.                                   |
 | `answer`      | Answer a question surfaced by `status`. Only reachable with `extensions: true`, since only extensions can ask.                           |
 | `abort`       | Stop a session; partial output stays readable.                                                                                          |
-| `init`        | **Call first.** Reports permitted tools, usable models, recipes. Everything else refuses until it runs.                                 |
 | `models`      | List models this delegate may use.                                                                                                      |
 | `sessions`    | List sessions, running and finished. Filter by `state`, expand with `verbose`.                                                          |
 | `forget`      | Drop a finished session from history, freeing its id.                                                                                   |
@@ -136,6 +138,29 @@ git clone https://github.com/howznguyen/pi-delegate-mcp && cd pi-delegate-mcp
 npm install && npm run build && npm link
 ```
 
+## First run
+
+Ask your agent to delegate something. It calls `init` once to learn what this server can reach,
+then `spawn`:
+
+```json
+{ "id": "audit-01", "label": "who still imports onnxruntime",
+  "prompt": "Search this repo for anything still importing onnxruntime and list the files.",
+  "cwd": "/path/to/repo" }
+```
+
+```json
+{ "sessionId": "audit-01", "state": "running", "model": "opencode-go/deepseek-v4-flash",
+  "activeTools": ["read", "grep", "find", "ls"] }
+```
+
+`spawn` returns immediately. Poll with `status` for the ordered tool trace and the answer, or
+`sessions` when several are in flight. If `init` fails, it says exactly what is missing: pi not
+installed, no provider logged in, or a model scope that matches nothing.
+
+Model names in the examples below are illustrative. Run `models` to see what your own pi install
+can actually reach.
+
 ## Traceability
 
 `spawn` and `run` both accept your own `id` and a free-text `label`:
@@ -184,10 +209,11 @@ the same agent with everything it already read still in context:
 ```
 
 ```
-turn 1  ->  "STORED"
-follow_up   { "sessionId": "quiz", "state": "running", "turnsSoFar": 1 }
-turn 2  ->  "4271"
+{ "sessionId": "search-audit-01", "state": "running", "turnsSoFar": 1 }
 ```
+
+The delegate picks up where it left off. It still holds the files it read on the first turn, so
+the second question costs one model call rather than a fresh session re-reading the repository.
 
 This is the cheap way to have a conversation with a delegate. Spawning a fresh one means
 re-explaining the task and paying for it to re-read the same files, and its answer arrives
@@ -279,9 +305,9 @@ you already run and appends a segment showing this workspace's delegates:
 Drop `PI_DELEGATE_STATUSLINE_WRAP` to print the pi segment alone.
 
 ```
-π ⠙ audit engine·t1 audit index·t2      running, with turn counts
-π ⠹ migrate·t7 ?1 waiting               one delegate is blocked on a question
-π ✓2                                    finished this session
+π ▸ audit engine·t1·12s audit index·t2·8s   running, with turn counts and elapsed time
+π ▸ migrate·t7·3m04s ?1 waiting             one delegate is blocked on a question
+π ✓2                                        finished, nothing running
 ```
 
 ### Which delegates belong to which session
@@ -368,6 +394,7 @@ on by default. It also costs real startup time, which is why it is off unless as
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Where status-line state is published                                     |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
+| `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |
 | `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run`                              |
 | `PI_DELEGATE_IGNORE_SCOPE`    | unset            | `1` ignores pi's `enabledModels` scope, allowing any configured model    |
 | `PI_DELEGATE_STRICT_SCOPE`    | unset            | `1` honours `enabledModels` exactly, dropping the custom-provider bypass |
@@ -391,6 +418,35 @@ not both.
 The server does not handle credentials. pi authenticates itself from `~/.pi/agent/auth.json`,
 then environment variables. MCP hosts often launch servers with a **stripped environment**, so
 prefer `auth.json` (run `pi` once and `/login`) over exporting keys in a shell profile.
+
+## Development
+
+```bash
+npm install
+npm run build       # tsc, src/*.ts -> dist/
+npm run typecheck   # tsc --noEmit, strict
+npm run test:ci     # offline: boots the server over stdio and lists its tools
+npm test            # full suite: needs a logged-in pi, makes real model calls
+```
+
+`test:ci` is what CI runs and what `prepublishOnly` gates on, because it needs no credentials and
+no network. `npm test` drives real delegates against real providers, so it costs money and only
+works where `pi` has been logged in.
+
+| Path                 | What lives there                                     |
+| -------------------- | ---------------------------------------------------- |
+| `src/config.ts`      | Every environment variable, read in one place         |
+| `src/permissions.ts` | The tool allowlist and the gate that enforces it      |
+| `src/registry.ts`    | Session map, id claiming, history eviction            |
+| `src/tools/`         | One module per group of MCP tools                     |
+| `src/pi/`            | Everything that touches the pi SDK                    |
+| `src/statusline/`    | State file publishing and the status line binary      |
+
+Releases are tag-driven. `npm version patch && git push --follow-tags` runs the build and tests,
+then publishes over OIDC trusted publishing, so no npm token is stored anywhere in the repository.
+
+Issues and pull requests are welcome. If you are reporting a delegate that misbehaved, the
+`toolCalls` trace from `status` with `verbose: true` is the useful thing to attach.
 
 ## Prior art
 
