@@ -77,7 +77,7 @@ export const MAX_CONCURRENT = num(process.env.PI_DELEGATE_MAX_CONCURRENT, 4);
 
 /** Absolute per-session budgets. Callers may lower these but can never exceed them. */
 export const MAX_TURNS = num(process.env.PI_DELEGATE_MAX_TURNS, 50);
-export const MAX_DURATION_MS = num(process.env.PI_DELEGATE_MAX_DURATION_MS, 30 * 60_000);
+export const MAX_DURATION_MS = num(process.env.PI_DELEGATE_MAX_DURATION_MS, 15 * 60_000);
 
 /** `run` is deliberately short; background sessions get room for real implementation work. */
 export const RUN_DEFAULT_TURNS = bounded(process.env.PI_DELEGATE_RUN_TURNS, 12, MAX_TURNS);
@@ -89,7 +89,7 @@ export const RUN_DEFAULT_DURATION_MS = bounded(
 export const SPAWN_DEFAULT_TURNS = bounded(process.env.PI_DELEGATE_SPAWN_TURNS, 30, MAX_TURNS);
 export const SPAWN_DEFAULT_DURATION_MS = bounded(
   process.env.PI_DELEGATE_SPAWN_DURATION_MS,
-  20 * 60_000,
+  10 * 60_000,
   MAX_DURATION_MS,
 );
 

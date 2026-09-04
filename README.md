@@ -412,11 +412,11 @@ on by default. It also costs real startup time, which is why it is off unless as
 | `PI_DELEGATE_BATCH_MAX`       | `4`              | Ceiling on tasks per `spawn_batch` call                                  |
 | `PI_DELEGATE_MAX_CONCURRENT`  | `4`              | Hard ceiling across all active delegates in this server process          |
 | `PI_DELEGATE_MAX_TURNS`       | `50`             | Absolute turn ceiling; per-call budgets may only lower it                 |
-| `PI_DELEGATE_MAX_DURATION_MS` | `1800000`        | Absolute wall-clock ceiling; per-call deadlines may only lower it         |
+| `PI_DELEGATE_MAX_DURATION_MS` | `900000`         | Absolute wall-clock ceiling; per-call deadlines may only lower it         |
 | `PI_DELEGATE_RUN_TURNS`       | `12`             | Default turn budget for blocking `run`                                   |
 | `PI_DELEGATE_RUN_DURATION_MS` | `300000`         | Default wall-clock deadline for blocking `run`                           |
 | `PI_DELEGATE_SPAWN_TURNS`     | `30`             | Default turn budget for `spawn` and `spawn_batch`                        |
-| `PI_DELEGATE_SPAWN_DURATION_MS` | `1200000`      | Default deadline for `spawn` and `spawn_batch`                           |
+| `PI_DELEGATE_SPAWN_DURATION_MS` | `600000`       | Default deadline for `spawn` and `spawn_batch`                           |
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Where status-line state is published                                     |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
@@ -436,7 +436,7 @@ through. Three defences, in order of preference:
 3. Raise the ceiling with `"timeout"` in `.mcp.json` or `MCP_TOOL_TIMEOUT` in the environment.
 
 These transport timeouts are separate from the delegate safety budgets. `run` defaults to 12 turns
-or 5 minutes; background sessions default to 30 turns or 20 minutes. At 75% of the turn budget, a
+or 5 minutes; background sessions default to 30 turns or 10 minutes. At 75% of the turn budget, a
 tool-using delegate is steered once to stop exploring and return its best conclusion. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Cancelling a blocking `run` also aborts its underlying worker.
