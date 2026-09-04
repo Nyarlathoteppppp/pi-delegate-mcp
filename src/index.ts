@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { abortAll } from "./registry.js";
 import { createServer } from "./server.js";
 import { cleanup } from "./statusline/state.js";
 
@@ -15,18 +16,29 @@ process.on("unhandledRejection", (err: unknown) => {
   process.stderr.write(`[pi-delegate] unhandled rejection: ${(err as Error)?.stack ?? String(err)}\n`);
 });
 
-for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => process.exit(0));
+let stopping = false;
+async function shutdown(): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  await Promise.race([
+    abortAll(),
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]).catch(() => {});
+  process.exit(0);
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void shutdown());
 process.on("exit", cleanup);
 
 // An MCP host that dies without closing the transport would otherwise leave this process
 // running forever, holding sessions and a state file nobody reads.
-process.stdin.on("close", () => process.exit(0));
+process.stdin.on("close", () => void shutdown());
 const HOST_PID = process.ppid;
 setInterval(() => {
   try {
     process.kill(HOST_PID, 0);
   } catch {
-    process.exit(0);
+    void shutdown();
   }
 }, HOST_WATCH_MS).unref();
 

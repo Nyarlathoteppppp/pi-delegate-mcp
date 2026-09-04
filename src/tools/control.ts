@@ -2,7 +2,51 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { HISTORY_LIMIT } from "../config.js";
 import { all, assertCapacity, forget, must } from "../registry.js";
+import type { PiWorker } from "../pi/worker.js";
+import type { Snapshot } from "../types.js";
 import { gated, json } from "./shared.js";
+
+const TERMINAL = new Set(["done", "aborted", "error"]);
+
+/** Wait without owning the worker lifecycle. Cancelling this wait never aborts the delegate. */
+export async function waitForProgress(
+  worker: PiWorker,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  afterTurns = worker.turns,
+  afterToolCalls = worker.toolCalls.length,
+): Promise<Snapshot> {
+  if (
+    TERMINAL.has(worker.state) ||
+    worker.turns > afterTurns ||
+    worker.toolCalls.length > afterToolCalls ||
+    signal?.aborted
+  )
+    return worker.snapshot();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", finish);
+      resolve(worker.snapshot());
+    };
+    const poll = setInterval(() => {
+      if (
+        TERMINAL.has(worker.state) ||
+        worker.turns > afterTurns ||
+        worker.toolCalls.length > afterToolCalls
+      )
+        finish();
+    }, 200);
+    const timeout = setTimeout(finish, timeoutMs);
+    signal?.addEventListener("abort", finish, { once: true });
+    if (signal?.aborted) finish();
+  });
+}
 
 export function registerControl(server: McpServer): void {
   gated(
@@ -31,6 +75,35 @@ export function registerControl(server: McpServer): void {
       inputSchema: { sessionId: z.string(), message: z.string() },
     },
     async ({ sessionId, message }) => json(await must(sessionId).steer(message)),
+  );
+
+  gated(
+    server,
+    "wait",
+    {
+      description:
+        "Wait briefly for a background delegate to finish or make observable progress. Returns a " +
+        "fresh status snapshot after a new turn/tool call, terminal state, or timeout. Cancelling " +
+        "this wait does not abort the delegate; use `abort` explicitly for that.",
+      inputSchema: {
+        sessionId: z.string(),
+        timeoutMs: z.number().int().min(250).max(55_000).optional().describe("Default 30000; max 55000"),
+        afterTurns: z.number().int().min(0).optional().describe("Prior snapshot's turn count"),
+        afterToolCalls: z.number().int().min(0).optional().describe("Prior snapshot's tool-call count"),
+        verbose: z.boolean().optional().describe("Include tool results and call ids in the returned trace"),
+      },
+    },
+    async ({ sessionId, timeoutMs = 30_000, afterTurns, afterToolCalls, verbose }, extra) => {
+      const worker = must(sessionId);
+      await waitForProgress(
+        worker,
+        timeoutMs,
+        extra.signal,
+        afterTurns ?? worker.turns,
+        afterToolCalls ?? worker.toolCalls.length,
+      );
+      return json(worker.snapshot({ verbose }));
+    },
   );
 
   gated(
@@ -107,6 +180,9 @@ export function registerControl(server: McpServer): void {
             model: s.model,
             thinking: s.thinking,
             turns: s.turns,
+            elapsedMs: s.elapsedMs,
+            limits: s.limits,
+            termination: s.termination,
             startedAt: s.startedAt,
             finishedAt: s.finishedAt,
             pendingQuestions: s.questions.length,

@@ -1,7 +1,13 @@
-import { DEFAULT_MODEL, HISTORY_LIMIT, MAX_CONCURRENT } from "./config.js";
+import {
+  DEFAULT_MODEL,
+  HISTORY_LIMIT,
+  MAX_CONCURRENT,
+  SPAWN_DEFAULT_DURATION_MS,
+  SPAWN_DEFAULT_TURNS,
+} from "./config.js";
 import { pickTools } from "./permissions.js";
 import { PiWorker } from "./pi/worker.js";
-import type { PiThinkingLevel } from "./types.js";
+import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -49,6 +55,15 @@ export function forget(id: string): void {
   sessions.delete(id);
 }
 
+/** Stop every live delegate before the MCP server exits. */
+export async function abortAll(reason: TerminationReason = "server_shutdown"): Promise<void> {
+  await Promise.all(
+    all()
+      .filter((worker) => worker.state === "starting" || worker.state === "running")
+      .map((worker) => worker.abort(reason)),
+  );
+}
+
 /** Drop the oldest finished sessions once history is over budget. Running ones are safe. */
 export function evictHistory(): void {
   const done = all().filter((w) => w.state !== "running" && w.state !== "starting");
@@ -69,6 +84,8 @@ export interface LaunchRequest {
   extensions?: boolean | undefined;
   id?: string | undefined;
   label?: string | undefined;
+  maxTurns?: number | undefined;
+  maxDurationMs?: number | undefined;
 }
 
 export async function launch(req: LaunchRequest, capacityChecked = false): Promise<PiWorker> {
@@ -81,6 +98,8 @@ export async function launch(req: LaunchRequest, capacityChecked = false): Promi
     thinking: req.thinking,
     tools: pickTools(req.tools),
     extensions: req.extensions ?? false,
+    maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
+    maxDurationMs: req.maxDurationMs ?? SPAWN_DEFAULT_DURATION_MS,
   });
   worker.onChange = () => publish(all());
   sessions.set(worker.id, worker);

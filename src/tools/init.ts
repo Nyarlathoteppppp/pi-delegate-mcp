@@ -6,7 +6,13 @@ import {
   HISTORY_LIMIT,
   LIST_CAP,
   MAX_CONCURRENT,
+  MAX_DURATION_MS,
+  MAX_TURNS,
   MODEL_ALLOWLIST,
+  RUN_DEFAULT_DURATION_MS,
+  RUN_DEFAULT_TURNS,
+  SPAWN_DEFAULT_DURATION_MS,
+  SPAWN_DEFAULT_TURNS,
   TRACE_ARGS,
   TRACE_RESULT,
 } from "../config.js";
@@ -102,20 +108,24 @@ export function registerInit(server: McpServer): void {
             'own `id` and a `label` so you can trace it later, e.g. id: "search-audit-01".',
           "2. `status` to poll. Read `state`, `turns`, and `toolCalls` (the ordered tool trace). " +
             "Add `verbose: true` to see tool results.",
-          "3. `steer` if it goes the wrong way. The message lands after its current tool call, " +
+          "3. `wait` to pause up to 55 seconds for progress or completion. Cancelling a wait does " +
+            "not abort the background delegate, so repeat it instead of guessing that a live task is stuck.",
+          "4. `steer` if it goes the wrong way. The message lands after its current tool call, " +
             "before the next model call. Cheaper than aborting and restarting.",
-          "4. `answer` when `status` shows a non-empty `questions` array, which blocks the delegate " +
+          "5. `answer` when `status` shows a non-empty `questions` array, which blocks the delegate " +
             "until you reply. Only extensions can ask, so this never fires unless you spawned with " +
             "`extensions: true`.",
-          "5. `follow_up` to give a finished delegate another turn. It still remembers everything it " +
+          "6. `follow_up` to give a finished delegate another turn. It still remembers everything it " +
             "read, so this beats spawning a fresh one and re-explaining the task.",
-          "6. `sessions` lists everything including finished runs; `forget` drops one.",
+          "7. `sessions` lists everything including finished runs; `forget` drops one.",
           "`spawn_batch` fans out several delegates at once. `run` blocks until done, so keep it for " +
             "questions that finish in under a minute.",
         ],
 
         gotchas: [
           "Slow models plus many turns means minutes, not seconds. Prefer `spawn` over `run`.",
+          "Every delegate has a turn budget and wall-clock deadline. Near the turn limit it is " +
+            "steered once to conclude; at the limit it is aborted with a termination reason.",
           "The delegate cannot see your conversation. Put every fact it needs into `prompt`.",
           "It reads AGENTS.md and CLAUDE.md from `cwd`, so point `cwd` at the right repository.",
           "pi extensions are off by default because they add startup cost and can misbehave. " +
@@ -124,6 +134,10 @@ export function registerInit(server: McpServer): void {
 
         limits: {
           maxConcurrent: MAX_CONCURRENT,
+          hardMaxTurns: MAX_TURNS,
+          hardMaxDurationMs: MAX_DURATION_MS,
+          runDefaults: { maxTurns: RUN_DEFAULT_TURNS, maxDurationMs: RUN_DEFAULT_DURATION_MS },
+          spawnDefaults: { maxTurns: SPAWN_DEFAULT_TURNS, maxDurationMs: SPAWN_DEFAULT_DURATION_MS },
           historyKept: HISTORY_LIMIT,
           traceArgsChars: TRACE_ARGS,
           traceResultChars: TRACE_RESULT,

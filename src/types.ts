@@ -1,6 +1,20 @@
 /** Every state a delegate can be in. `starting` covers session construction. */
 export type SessionState = "starting" | "running" | "done" | "aborted" | "error";
 
+export type TerminationReason =
+  | "manual_abort"
+  | "caller_cancelled"
+  | "max_turns"
+  | "deadline"
+  | "server_shutdown";
+
+export interface Termination {
+  reason: TerminationReason;
+  limit?: number;
+  observed?: number;
+  at: string;
+}
+
 /** Thinking levels accepted by pi 0.84.x. Omit the field to let pi apply its own settings. */
 export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -53,6 +67,9 @@ export interface Snapshot {
   error: string | undefined;
   startedAt: string;
   finishedAt: string | undefined;
+  elapsedMs: number;
+  limits: { maxTurns: number; maxDurationMs: number };
+  termination: Termination | undefined;
 }
 
 /** pi's enabledModels scope, resolved for one working directory. */

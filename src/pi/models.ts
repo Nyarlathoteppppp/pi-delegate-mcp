@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_DIR, IGNORE_SCOPE, MODEL_ALLOWLIST, STRICT_SCOPE } from "../config.js";
-import type { ModelScope } from "../types.js";
+import type { ModelScope, PiThinkingLevel } from "../types.js";
 import { getRuntime, type PiModel } from "./runtime.js";
 
 function readJson(path: string): Record<string, unknown> | undefined {
@@ -47,6 +47,20 @@ export interface ScopedModel {
   provider: string;
   id: string;
   ref: string;
+}
+
+/** Refuse a thinking request that pi would silently clamp to off for this model. */
+export function assertThinkingSupported(
+  model: Pick<PiModel, "provider" | "id" | "reasoning" | "thinkingLevelMap"> | undefined,
+  thinking: PiThinkingLevel | undefined,
+): void {
+  if (!model || !thinking || thinking === "off") return;
+  const levelMap = model.thinkingLevelMap as Record<string, string | null | undefined> | undefined;
+  if (!model.reasoning || (levelMap && !levelMap[thinking]))
+    throw new Error(
+      `Model ${model.provider}/${model.id} does not support thinking: ${thinking}. ` +
+        "Omit thinking or choose a level declared by pi for this model.",
+    );
 }
 
 /**

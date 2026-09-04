@@ -23,6 +23,9 @@ const num = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 
+const bounded = (value: string | undefined, fallback: number, ceiling: number): number =>
+  Math.min(num(value, fallback), ceiling);
+
 /** Where pi keeps auth.json, settings.json and extensions. */
 export const AGENT_DIR = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 
@@ -71,6 +74,24 @@ export const BATCH_MAX = num(process.env.PI_DELEGATE_BATCH_MAX, 4);
 
 /** Hard ceiling across every active spawn/run/batch session in this server process. */
 export const MAX_CONCURRENT = num(process.env.PI_DELEGATE_MAX_CONCURRENT, 4);
+
+/** Absolute per-session budgets. Callers may lower these but can never exceed them. */
+export const MAX_TURNS = num(process.env.PI_DELEGATE_MAX_TURNS, 50);
+export const MAX_DURATION_MS = num(process.env.PI_DELEGATE_MAX_DURATION_MS, 30 * 60_000);
+
+/** `run` is deliberately short; background sessions get room for real implementation work. */
+export const RUN_DEFAULT_TURNS = bounded(process.env.PI_DELEGATE_RUN_TURNS, 12, MAX_TURNS);
+export const RUN_DEFAULT_DURATION_MS = bounded(
+  process.env.PI_DELEGATE_RUN_DURATION_MS,
+  5 * 60_000,
+  MAX_DURATION_MS,
+);
+export const SPAWN_DEFAULT_TURNS = bounded(process.env.PI_DELEGATE_SPAWN_TURNS, 30, MAX_TURNS);
+export const SPAWN_DEFAULT_DURATION_MS = bounded(
+  process.env.PI_DELEGATE_SPAWN_DURATION_MS,
+  20 * 60_000,
+  MAX_DURATION_MS,
+);
 
 /** Above this, `init` summarises models by provider instead of dumping every ref. */
 export const LIST_CAP = num(process.env.PI_DELEGATE_LIST_CAP, 60);

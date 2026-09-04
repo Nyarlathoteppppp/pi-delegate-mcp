@@ -1,11 +1,32 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ALLOW_ALL, BATCH_MAX, DEFAULT_MODEL, PROGRESS_MS } from "../config.js";
+import {
+  ALLOW_ALL,
+  BATCH_MAX,
+  DEFAULT_MODEL,
+  MAX_DURATION_MS,
+  MAX_TURNS,
+  PROGRESS_MS,
+  RUN_DEFAULT_DURATION_MS,
+  RUN_DEFAULT_TURNS,
+} from "../config.js";
 import { PERMITTED, pickTools, READ_ONLY_TOOLS } from "../permissions.js";
 import { resolveModel } from "../pi/models.js";
 import { message } from "../pi/worker.js";
 import { assertCapacity, claimId, evictHistory, launch } from "../registry.js";
 import { gated, json } from "./shared.js";
+
+export function bindCancellation(
+  signal: AbortSignal,
+  abort: () => void | Promise<void>,
+): () => void {
+  const cancel = (): void => {
+    void abort();
+  };
+  if (signal.aborted) cancel();
+  else signal.addEventListener("abort", cancel, { once: true });
+  return () => signal.removeEventListener("abort", cancel);
+}
 
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
@@ -34,6 +55,20 @@ const spawnShape = {
     .boolean()
     .optional()
     .describe("Load pi extensions for this delegate. Off by default; they add startup cost and can misbehave."),
+  maxTurns: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_TURNS)
+    .optional()
+    .describe(`Maximum model/tool turns for this run; server ceiling ${MAX_TURNS}.`),
+  maxDurationMs: z
+    .number()
+    .int()
+    .min(1_000)
+    .max(MAX_DURATION_MS)
+    .optional()
+    .describe(`Wall-clock deadline in milliseconds; server ceiling ${MAX_DURATION_MS}.`),
 };
 
 const taskShape = z.object({
@@ -48,6 +83,8 @@ const taskShape = z.object({
   cwd: z.string().optional().describe("Overrides the batch `cwd` for this task alone"),
   tools: z.array(z.string()).optional().describe("Overrides the batch `tools` for this task alone"),
   extensions: z.boolean().optional(),
+  maxTurns: z.number().int().min(1).max(MAX_TURNS).optional(),
+  maxDurationMs: z.number().int().min(1_000).max(MAX_DURATION_MS).optional(),
 });
 
 export function registerSpawn(server: McpServer): void {
@@ -70,6 +107,7 @@ export function registerSpawn(server: McpServer): void {
         model: w.model,
         thinking: w.thinking,
         activeTools: w.activeTools,
+        limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
       });
     },
   );
@@ -94,13 +132,27 @@ export function registerSpawn(server: McpServer): void {
         cwd: z.string().optional().describe("Default working directory for every task in this batch"),
         tools: z.array(z.string()).optional().describe("Default tool allowlist for every task in this batch"),
         extensions: z.boolean().optional().describe("Default extensions setting for every task in this batch"),
+        maxTurns: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_TURNS)
+          .optional()
+          .describe(`Default turn budget; server ceiling ${MAX_TURNS}`),
+        maxDurationMs: z
+          .number()
+          .int()
+          .min(1_000)
+          .max(MAX_DURATION_MS)
+          .optional()
+          .describe(`Default wall-clock deadline; server ceiling ${MAX_DURATION_MS} ms`),
         idPrefix: z
           .string()
           .optional()
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async ({ tasks, model, thinking, cwd, tools, extensions, idPrefix }) => {
+    async ({ tasks, model, thinking, cwd, tools, extensions, maxTurns, maxDurationMs, idPrefix }) => {
       const width = Math.max(String(tasks.length).length, 2);
       const merged = tasks.map((t, i) => ({
         prompt: t.prompt,
@@ -110,6 +162,8 @@ export function registerSpawn(server: McpServer): void {
         cwd: t.cwd ?? cwd,
         tools: t.tools ?? tools,
         extensions: t.extensions ?? extensions,
+        maxTurns: t.maxTurns ?? maxTurns,
+        maxDurationMs: t.maxDurationMs ?? maxDurationMs,
         id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
       }));
 
@@ -142,6 +196,7 @@ export function registerSpawn(server: McpServer): void {
         state: string;
         model?: string;
         thinking?: string;
+        limits: { maxTurns: number; maxDurationMs: number };
       }> = [];
       const failures: Array<{ index: number; id?: string; error: string }> = [];
       await Promise.all(
@@ -155,6 +210,7 @@ export function registerSpawn(server: McpServer): void {
               state: w.state,
               model: w.model,
               thinking: w.thinking,
+              limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
             });
           } catch (e) {
             failures.push({ index, id: t.id, error: message(e) });
@@ -186,7 +242,14 @@ export function registerSpawn(server: McpServer): void {
       inputSchema: spawnShape,
     },
     async (args, extra) => {
-      const w = await launch(args);
+      const w = await launch({
+        ...args,
+        maxTurns: args.maxTurns ?? RUN_DEFAULT_TURNS,
+        maxDurationMs: args.maxDurationMs ?? RUN_DEFAULT_DURATION_MS,
+      });
+      const unbindCancellation = bindCancellation(extra.signal, async () => {
+        await w.abort("caller_cancelled");
+      });
       // Progress notifications reset the MCP request timeout, which defaults to 60s.
       const token = extra?._meta?.progressToken;
       const ticker = token
@@ -203,6 +266,7 @@ export function registerSpawn(server: McpServer): void {
         await w.run;
       } finally {
         if (ticker) clearInterval(ticker);
+        unbindCancellation();
       }
       const snap = w.snapshot();
       evictHistory();

@@ -8,8 +8,17 @@ import {
   type CreateAgentSessionResult,
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR } from "../config.js";
-import type { Notice, PiThinkingLevel, SessionState, Snapshot, ToolCall, ToolCallSummary } from "../types.js";
-import { resolveModel } from "./models.js";
+import type {
+  Notice,
+  PiThinkingLevel,
+  SessionState,
+  Snapshot,
+  Termination,
+  TerminationReason,
+  ToolCall,
+  ToolCallSummary,
+} from "../types.js";
+import { assertThinkingSupported, resolveModel } from "./models.js";
 import { getRuntime } from "./runtime.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
@@ -26,7 +35,13 @@ export interface WorkerOptions {
   thinking?: PiThinkingLevel | undefined;
   tools: string[];
   extensions?: boolean;
+  maxTurns: number;
+  maxDurationMs: number;
 }
+
+const FINALIZE_PROMPT =
+  "Stop expanding the investigation and do not call more tools. Return the best conclusion now from " +
+  "the evidence already collected. Include concrete evidence, uncertainty, blockers, and the next action.";
 
 /**
  * One delegated pi session. Holds the live AgentSession in-process, which is what keeps
@@ -38,6 +53,8 @@ export class PiWorker {
   readonly cwd: string;
   readonly toolNames: string[];
   readonly startedAt: string;
+  readonly maxTurns: number;
+  readonly maxDurationMs: number;
 
   state: SessionState = "starting";
   turns = 0;
@@ -47,6 +64,7 @@ export class PiWorker {
   error: string | undefined;
   finishedAt: string | undefined;
   thinking: PiThinkingLevel | undefined;
+  termination: Termination | undefined;
 
   readonly toolCalls: ToolCall[] = [];
   readonly notices: Notice[] = [];
@@ -63,8 +81,21 @@ export class PiWorker {
   private readonly openCalls = new Map<string, ToolCall>();
   private session: AgentSession | undefined;
   private unsubscribe: (() => void) | undefined;
+  private deadlineTimer: NodeJS.Timeout | undefined;
+  private runTurns = 0;
+  private finishSteerSent = false;
 
-  constructor({ id, label, cwd, model, thinking, tools, extensions = false }: WorkerOptions) {
+  constructor({
+    id,
+    label,
+    cwd,
+    model,
+    thinking,
+    tools,
+    extensions = false,
+    maxTurns,
+    maxDurationMs,
+  }: WorkerOptions) {
     this.id = id ?? randomUUID();
     this.label = label;
     this.cwd = cwd;
@@ -72,6 +103,8 @@ export class PiWorker {
     this.thinkingSpec = thinking;
     this.toolNames = tools;
     this.extensionsEnabled = extensions;
+    this.maxTurns = maxTurns;
+    this.maxDurationMs = maxDurationMs;
     this.startedAt = new Date().toISOString();
   }
 
@@ -91,6 +124,8 @@ export class PiWorker {
 
   async start(prompt: string): Promise<this> {
     const model = await resolveModel(this.modelSpec, this.cwd);
+
+    assertThinkingSupported(model, this.thinkingSpec);
 
     // Third-party pi extensions start timers and sockets that outlive dispose() and then
     // throw against a stale ctx. A delegate does not need them.
@@ -148,6 +183,13 @@ export class PiWorker {
     this.state = "running";
     this.error = undefined;
     this.finishedAt = undefined;
+    this.termination = undefined;
+    this.runTurns = 0;
+    this.finishSteerSent = false;
+    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    this.deadlineTimer = setTimeout(() => {
+      void this.abort("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
+    }, this.maxDurationMs);
     this.run = session
       .prompt(prompt)
       .then(() => session.waitForIdle())
@@ -155,10 +197,14 @@ export class PiWorker {
         this.state = this.state === "aborted" ? "aborted" : "done";
       })
       .catch((e: unknown) => {
-        this.state = "error";
-        this.error = message(e);
+        if (this.state !== "aborted") {
+          this.state = "error";
+          this.error = message(e);
+        }
       })
       .finally(() => {
+        if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+        this.deadlineTimer = undefined;
         this.finishedAt = new Date().toISOString();
         // Unblock anything still waiting on an answer that will now never come.
         for (const q of this.questions.values()) q.resolve(undefined);
@@ -186,8 +232,36 @@ export class PiWorker {
     switch (ev.type) {
       case "turn_start":
         this.turns++;
+        this.runTurns++;
         this.onChange?.();
         break;
+
+      case "turn_end": {
+        // A tool-free turn is normally the final answer. Budget only an agent that is
+        // continuing the tool loop, so a conclusion at the limit is not thrown away.
+        if (this.state !== "running" || ev.toolResults.length === 0) break;
+        if (this.runTurns >= this.maxTurns) {
+          void this.abort("max_turns", { limit: this.maxTurns, observed: this.runTurns });
+          break;
+        }
+        const finishAt = Math.max(1, Math.floor(this.maxTurns * 0.75));
+        if (!this.finishSteerSent && this.runTurns >= finishAt && this.questions.size === 0) {
+          this.finishSteerSent = true;
+          this.notices.push({
+            type: "warning",
+            message: `turn budget ${this.runTurns}/${this.maxTurns}: requested final answer without more tools`,
+            at: new Date().toISOString(),
+          });
+          void this.session?.steer(FINALIZE_PROMPT).catch((e: unknown) => {
+            this.notices.push({
+              type: "warning",
+              message: `automatic finalization steer failed: ${message(e)}`,
+              at: new Date().toISOString(),
+            });
+          });
+        }
+        break;
+      }
 
       case "tool_execution_start": {
         const call: ToolCall = {
@@ -246,16 +320,31 @@ export class PiWorker {
     return { steered: true, queued: this.session.getSteeringMessages().length };
   }
 
-  async abort(): Promise<{ aborted: true }> {
+  async abort(
+    reason: TerminationReason = "manual_abort",
+    detail: { limit?: number; observed?: number } = {},
+  ): Promise<{ aborted: true; termination: Termination }> {
+    if (!this.termination)
+      this.termination = {
+        reason,
+        ...(detail.limit === undefined ? {} : { limit: detail.limit }),
+        ...(detail.observed === undefined ? {} : { observed: detail.observed }),
+        at: new Date().toISOString(),
+      };
     this.state = "aborted";
     this.onChange?.();
     await this.session?.abort().catch(NOOP);
-    return { aborted: true };
+    return { aborted: true, termination: this.termination };
   }
 
   dispose(): void {
+    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     this.unsubscribe?.();
     this.session?.dispose?.();
+  }
+
+  private elapsedMs(): number {
+    return Date.now() - Date.parse(this.startedAt);
   }
 
   snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {
@@ -278,6 +367,9 @@ export class PiWorker {
       error: this.error,
       startedAt: this.startedAt,
       finishedAt: this.finishedAt,
+      elapsedMs: this.elapsedMs(),
+      limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs },
+      termination: this.termination,
     };
   }
 }
