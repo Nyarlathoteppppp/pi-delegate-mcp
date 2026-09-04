@@ -407,8 +407,8 @@ on by default. It also costs real startup time, which is why it is off unless as
 | `PI_DELEGATE_HISTORY`         | `50`             | Finished sessions kept for review                                        |
 | `PI_DELEGATE_TRACE_ARGS`      | `400`            | Max chars of tool arguments kept in the trace                            |
 | `PI_DELEGATE_TRACE_RESULT`    | `600`            | Max chars of tool results kept in the trace                              |
-| `PI_DELEGATE_BATCH_MAX`       | `10`             | Ceiling on tasks per `spawn_batch` call                                  |
-| `PI_DELEGATE_MAX_CONCURRENT`  | `2`              | Hard ceiling across all active delegates in this server process          |
+| `PI_DELEGATE_BATCH_MAX`       | `4`              | Ceiling on tasks per `spawn_batch` call                                  |
+| `PI_DELEGATE_MAX_CONCURRENT`  | `4`              | Hard ceiling across all active delegates in this server process          |
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Where status-line state is published                                     |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |

@@ -67,10 +67,10 @@ export const STRICT_SCOPE = process.env.PI_DELEGATE_STRICT_SCOPE === "1";
 export const HISTORY_LIMIT = num(process.env.PI_DELEGATE_HISTORY, 50);
 
 /** Ceiling on one `spawn_batch` call. A fan-out this wide is usually a planning mistake. */
-export const BATCH_MAX = num(process.env.PI_DELEGATE_BATCH_MAX, 10);
+export const BATCH_MAX = num(process.env.PI_DELEGATE_BATCH_MAX, 4);
 
 /** Hard ceiling across every active spawn/run/batch session in this server process. */
-export const MAX_CONCURRENT = num(process.env.PI_DELEGATE_MAX_CONCURRENT, 2);
+export const MAX_CONCURRENT = num(process.env.PI_DELEGATE_MAX_CONCURRENT, 4);
 
 /** Above this, `init` summarises models by provider instead of dumping every ref. */
 export const LIST_CAP = num(process.env.PI_DELEGATE_LIST_CAP, 60);
