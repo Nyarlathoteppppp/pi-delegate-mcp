@@ -41,6 +41,18 @@ export const ALLOW_EXTRA = (process.env.PI_DELEGATE_ALLOW_TOOLS || "")
 /** Model used when a call omits `model`. Undefined means pi's own configured default. */
 export const DEFAULT_MODEL = process.env.PI_DELEGATE_MODEL || undefined;
 
+/**
+ * Optional delegate-only model allowlist. This is deliberately independent of pi's
+ * enabledModels so an MCP host can expose a narrow worker pool without shrinking the
+ * interactive pi model picker.
+ */
+export const MODEL_ALLOWLIST = new Set(
+  (process.env.PI_DELEGATE_MODEL_ALLOWLIST || "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean),
+);
+
 /** Ignore pi's enabledModels scope entirely. */
 export const IGNORE_SCOPE = process.env.PI_DELEGATE_IGNORE_SCOPE === "1";
 
@@ -56,6 +68,9 @@ export const HISTORY_LIMIT = num(process.env.PI_DELEGATE_HISTORY, 50);
 
 /** Ceiling on one `spawn_batch` call. A fan-out this wide is usually a planning mistake. */
 export const BATCH_MAX = num(process.env.PI_DELEGATE_BATCH_MAX, 10);
+
+/** Hard ceiling across every active spawn/run/batch session in this server process. */
+export const MAX_CONCURRENT = num(process.env.PI_DELEGATE_MAX_CONCURRENT, 2);
 
 /** Above this, `init` summarises models by provider instead of dumping every ref. */
 export const LIST_CAP = num(process.env.PI_DELEGATE_LIST_CAP, 60);

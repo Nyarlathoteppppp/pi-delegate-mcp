@@ -4,12 +4,16 @@ import { ALLOW_ALL, BATCH_MAX, DEFAULT_MODEL, PROGRESS_MS } from "../config.js";
 import { PERMITTED, pickTools, READ_ONLY_TOOLS } from "../permissions.js";
 import { resolveModel } from "../pi/models.js";
 import { message } from "../pi/worker.js";
-import { claimId, evictHistory, launch } from "../registry.js";
+import { assertCapacity, claimId, evictHistory, launch } from "../registry.js";
 import { gated, json } from "./shared.js";
 
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
   model: z.string().optional().describe('Model as "provider/modelId", e.g. "openrouter/stealth/ox-alpha"'),
+  thinking: z
+    .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
+    .optional()
+    .describe("Explicit pi thinking level. Omit to use pi's configured/default level."),
   cwd: z.string().optional().describe("Working directory for the agent"),
   id: z
     .string()
@@ -37,6 +41,10 @@ const taskShape = z.object({
   id: z.string().optional().describe("Session id for this task. Defaults to `idPrefix`-NN, or a UUID."),
   label: z.string().optional().describe("Free-text note for this task"),
   model: z.string().optional().describe("Overrides the batch `model` for this task alone"),
+  thinking: z
+    .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
+    .optional()
+    .describe("Overrides the batch `thinking` for this task alone"),
   cwd: z.string().optional().describe("Overrides the batch `cwd` for this task alone"),
   tools: z.array(z.string()).optional().describe("Overrides the batch `tools` for this task alone"),
   extensions: z.boolean().optional(),
@@ -55,7 +63,14 @@ export function registerSpawn(server: McpServer): void {
     },
     async (args) => {
       const w = await launch(args);
-      return json({ sessionId: w.id, label: w.label, state: w.state, model: w.model, activeTools: w.activeTools });
+      return json({
+        sessionId: w.id,
+        label: w.label,
+        state: w.state,
+        model: w.model,
+        thinking: w.thinking,
+        activeTools: w.activeTools,
+      });
     },
   );
 
@@ -72,6 +87,10 @@ export function registerSpawn(server: McpServer): void {
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
         model: z.string().optional().describe("Default model for every task in this batch"),
+        thinking: z
+          .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
+          .optional()
+          .describe("Default thinking level for every task in this batch; omit to use pi settings"),
         cwd: z.string().optional().describe("Default working directory for every task in this batch"),
         tools: z.array(z.string()).optional().describe("Default tool allowlist for every task in this batch"),
         extensions: z.boolean().optional().describe("Default extensions setting for every task in this batch"),
@@ -81,12 +100,13 @@ export function registerSpawn(server: McpServer): void {
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async ({ tasks, model, cwd, tools, extensions, idPrefix }) => {
+    async ({ tasks, model, thinking, cwd, tools, extensions, idPrefix }) => {
       const width = Math.max(String(tasks.length).length, 2);
       const merged = tasks.map((t, i) => ({
         prompt: t.prompt,
         label: t.label,
         model: t.model ?? model,
+        thinking: t.thinking ?? thinking,
         cwd: t.cwd ?? cwd,
         tools: t.tools ?? tools,
         extensions: t.extensions ?? extensions,
@@ -112,13 +132,30 @@ export function registerSpawn(server: McpServer): void {
         }
       }
 
-      const started: Array<{ index: number; sessionId: string; label?: string; state: string; model?: string }> = [];
+      // Check capacity once for the complete batch so a rejected fan-out starts nothing.
+      assertCapacity(merged.length);
+
+      const started: Array<{
+        index: number;
+        sessionId: string;
+        label?: string;
+        state: string;
+        model?: string;
+        thinking?: string;
+      }> = [];
       const failures: Array<{ index: number; id?: string; error: string }> = [];
       await Promise.all(
         merged.map(async (t, index) => {
           try {
-            const w = await launch(t);
-            started.push({ index, sessionId: w.id, label: w.label, state: w.state, model: w.model });
+            const w = await launch(t, true);
+            started.push({
+              index,
+              sessionId: w.id,
+              label: w.label,
+              state: w.state,
+              model: w.model,
+              thinking: w.thinking,
+            });
           } catch (e) {
             failures.push({ index, id: t.id, error: message(e) });
           }

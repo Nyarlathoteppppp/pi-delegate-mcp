@@ -50,6 +50,7 @@ export function publish(sessions: Iterable<PiWorker>): void {
       label: w.label,
       state: w.state,
       model: w.model,
+      thinking: w.thinking,
       cwd: w.cwd,
       turns: w.turns,
       questions: w.questions.size,

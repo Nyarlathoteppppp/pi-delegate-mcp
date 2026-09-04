@@ -1,6 +1,15 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ALLOW_ALL, DEFAULT_MODEL, HISTORY_LIMIT, LIST_CAP, TRACE_ARGS, TRACE_RESULT } from "../config.js";
+import {
+  ALLOW_ALL,
+  DEFAULT_MODEL,
+  HISTORY_LIMIT,
+  LIST_CAP,
+  MAX_CONCURRENT,
+  MODEL_ALLOWLIST,
+  TRACE_ARGS,
+  TRACE_RESULT,
+} from "../config.js";
 import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { modelScope, preflight, scopedModels } from "../pi/models.js";
 import { json, markInitialised } from "./shared.js";
@@ -58,8 +67,11 @@ export function registerInit(server: McpServer): void {
 
         models: {
           defaultWhenYouOmitModel: DEFAULT_MODEL ?? "(pi's own configured default)",
+          delegateAllowlist: MODEL_ALLOWLIST.size ? [...MODEL_ALLOWLIST] : "not set",
           format: 'Pass "provider/modelId". An unresolvable name is a hard error, never a silent fallback.',
-          scoped: scope
+          scoped: MODEL_ALLOWLIST.size
+            ? "Only models in PI_DELEGATE_MODEL_ALLOWLIST that also pass pi's own scope may be used."
+            : scope
             ? "Only the models below may be used. Anything else is a hard error."
             : "pi has no enabledModels set, so every configured model is usable.",
           ...(bypassed.length
@@ -111,6 +123,7 @@ export function registerInit(server: McpServer): void {
         ],
 
         limits: {
+          maxConcurrent: MAX_CONCURRENT,
           historyKept: HISTORY_LIMIT,
           traceArgsChars: TRACE_ARGS,
           traceResultChars: TRACE_RESULT,

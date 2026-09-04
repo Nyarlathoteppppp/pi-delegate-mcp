@@ -1,6 +1,7 @@
-import { DEFAULT_MODEL, HISTORY_LIMIT } from "./config.js";
+import { DEFAULT_MODEL, HISTORY_LIMIT, MAX_CONCURRENT } from "./config.js";
 import { pickTools } from "./permissions.js";
 import { PiWorker } from "./pi/worker.js";
+import type { PiThinkingLevel } from "./types.js";
 import { publish } from "./statusline/state.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -10,6 +11,17 @@ const sessions = new Map<string, PiWorker>();
 
 export const all = (): PiWorker[] => [...sessions.values()];
 export const count = (): number => sessions.size;
+export const activeCount = (): number =>
+  all().filter((worker) => worker.state === "starting" || worker.state === "running").length;
+
+export function assertCapacity(additional = 1): void {
+  const active = activeCount();
+  if (active + additional > MAX_CONCURRENT)
+    throw new Error(
+      `Delegate concurrency limit is ${MAX_CONCURRENT}; ${active} session(s) are active and ` +
+        `${additional} more were requested. Wait, abort a session, or raise PI_DELEGATE_MAX_CONCURRENT.`,
+    );
+}
 
 /**
  * Validate a caller-supplied id and reserve nothing. Split out from `launch` so a batch
@@ -51,6 +63,7 @@ export function evictHistory(): void {
 export interface LaunchRequest {
   prompt: string;
   model?: string | undefined;
+  thinking?: PiThinkingLevel | undefined;
   cwd?: string | undefined;
   tools?: string[] | undefined;
   extensions?: boolean | undefined;
@@ -58,12 +71,14 @@ export interface LaunchRequest {
   label?: string | undefined;
 }
 
-export async function launch(req: LaunchRequest): Promise<PiWorker> {
+export async function launch(req: LaunchRequest, capacityChecked = false): Promise<PiWorker> {
+  if (!capacityChecked) assertCapacity();
   const worker = new PiWorker({
     id: claimId(req.id),
     label: req.label,
     cwd: req.cwd || process.cwd(),
     model: req.model || DEFAULT_MODEL,
+    thinking: req.thinking,
     tools: pickTools(req.tools),
     extensions: req.extensions ?? false,
   });

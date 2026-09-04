@@ -8,7 +8,7 @@ import {
   type CreateAgentSessionResult,
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR } from "../config.js";
-import type { Notice, SessionState, Snapshot, ToolCall, ToolCallSummary } from "../types.js";
+import type { Notice, PiThinkingLevel, SessionState, Snapshot, ToolCall, ToolCallSummary } from "../types.js";
 import { resolveModel } from "./models.js";
 import { getRuntime } from "./runtime.js";
 import { clipArgs, flatten } from "./trace.js";
@@ -23,6 +23,7 @@ export interface WorkerOptions {
   label?: string | undefined;
   cwd: string;
   model?: string | undefined;
+  thinking?: PiThinkingLevel | undefined;
   tools: string[];
   extensions?: boolean;
 }
@@ -45,6 +46,7 @@ export class PiWorker {
   activeTools: string[] | undefined;
   error: string | undefined;
   finishedAt: string | undefined;
+  thinking: PiThinkingLevel | undefined;
 
   readonly toolCalls: ToolCall[] = [];
   readonly notices: Notice[] = [];
@@ -57,15 +59,17 @@ export class PiWorker {
 
   private readonly extensionsEnabled: boolean;
   private readonly modelSpec: string | undefined;
+  private readonly thinkingSpec: PiThinkingLevel | undefined;
   private readonly openCalls = new Map<string, ToolCall>();
   private session: AgentSession | undefined;
   private unsubscribe: (() => void) | undefined;
 
-  constructor({ id, label, cwd, model, tools, extensions = false }: WorkerOptions) {
+  constructor({ id, label, cwd, model, thinking, tools, extensions = false }: WorkerOptions) {
     this.id = id ?? randomUUID();
     this.label = label;
     this.cwd = cwd;
     this.modelSpec = model;
+    this.thinkingSpec = thinking;
     this.toolNames = tools;
     this.extensionsEnabled = extensions;
     this.startedAt = new Date().toISOString();
@@ -115,12 +119,14 @@ export class PiWorker {
       cwd: this.cwd,
       modelRuntime: await getRuntime(),
       model,
+      thinkingLevel: this.thinkingSpec,
       sessionManager: SessionManager.inMemory(),
       tools: this.toolNames,
       resourceLoader,
     });
     this.session = session;
     this.model = model ? `${model.provider}/${model.id}` : "(pi default)";
+    this.thinking = session.thinkingLevel;
     this.activeTools = session.getActiveToolNames();
 
     this.unsubscribe = session.subscribe((ev) => this.onEvent(ev));
@@ -261,6 +267,7 @@ export class PiWorker {
       label: this.label,
       state: this.state,
       model: this.model,
+      thinking: this.thinking,
       cwd: this.cwd,
       activeTools: this.activeTools,
       turns: this.turns,

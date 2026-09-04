@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_DIR, IGNORE_SCOPE, STRICT_SCOPE } from "../config.js";
+import { AGENT_DIR, IGNORE_SCOPE, MODEL_ALLOWLIST, STRICT_SCOPE } from "../config.js";
 import type { ModelScope } from "../types.js";
 import { getRuntime, type PiModel } from "./runtime.js";
 
@@ -38,6 +38,11 @@ export function inScope(scope: ModelScope | undefined, provider: string, id: str
   return scope.customProviders.has(provider) || scope.enabled.has(`${provider}/${id}`);
 }
 
+/** A second, MCP-only boundary that never changes pi's interactive model scope. */
+export function inDelegateAllowlist(provider: string, id: string): boolean {
+  return MODEL_ALLOWLIST.size === 0 || MODEL_ALLOWLIST.has(`${provider}/${id}`);
+}
+
 export interface ScopedModel {
   provider: string;
   id: string;
@@ -54,7 +59,8 @@ export async function scopedModels(cwd?: string): Promise<ScopedModel[]> {
   const available = await rt.getAvailable();
   return available
     .map((m) => ({ provider: m.provider, id: m.id, ref: `${m.provider}/${m.id}` }))
-    .filter((m) => inScope(scope, m.provider, m.id));
+    .filter((m) => inScope(scope, m.provider, m.id))
+    .filter((m) => inDelegateAllowlist(m.provider, m.id));
 }
 
 export interface Health {
@@ -89,7 +95,10 @@ export async function preflight(cwd?: string): Promise<Health> {
   if (usable.length === 0) {
     const scope = modelScope(cwd);
     throw new Error(
-      scope
+      MODEL_ALLOWLIST.size
+        ? `No usable model intersects PI_DELEGATE_MODEL_ALLOWLIST ` +
+          `[${[...MODEL_ALLOWLIST].join(", ")}]. Check exact IDs with pi --list-models and authentication.`
+        : scope
         ? `No usable model. pi's enabledModels scope [${[...scope.enabled].join(", ")}] does not ` +
           `intersect any authenticated provider. Widen it via pi's /scoped-models, log in to the ` +
           `matching provider, or set PI_DELEGATE_IGNORE_SCOPE=1.`
@@ -119,6 +128,13 @@ export async function resolveModel(spec: string | undefined, cwd?: string): Prom
       `Model not found: ${spec}. Use "provider/modelId", e.g. "openrouter/stealth/ox-alpha". ` +
         `Call the "models" tool to list what is available.`,
     );
+
+  if (!inDelegateAllowlist(model.provider, model.id)) {
+    throw new Error(
+      `Model ${model.provider}/${model.id} is blocked by PI_DELEGATE_MODEL_ALLOWLIST. ` +
+        `Allowed delegates: ${[...MODEL_ALLOWLIST].join(", ")}.`,
+    );
+  }
 
   const scope = modelScope(cwd);
   if (!inScope(scope, model.provider, model.id)) {

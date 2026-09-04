@@ -1,6 +1,9 @@
 /** Every state a delegate can be in. `starting` covers session construction. */
 export type SessionState = "starting" | "running" | "done" | "aborted" | "error";
 
+/** Thinking levels accepted by pi 0.84.x. Omit the field to let pi apply its own settings. */
+export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export type QuestionKind = "select" | "confirm" | "input";
 
 export interface QuestionJson {
@@ -39,6 +42,7 @@ export interface Snapshot {
   label: string | undefined;
   state: SessionState;
   model: string | undefined;
+  thinking: PiThinkingLevel | undefined;
   cwd: string;
   activeTools: string[] | undefined;
   turns: number;
@@ -63,6 +67,7 @@ export interface PublishedSession {
   label: string | undefined;
   state: SessionState;
   model: string | undefined;
+  thinking: PiThinkingLevel | undefined;
   cwd: string;
   turns: number;
   questions: number;

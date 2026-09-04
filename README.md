@@ -54,6 +54,7 @@ agent from another program close both.
 | Redirect a running turn     | no                     | `abort` only                         | `steer`                    |
 | Agent can ask you something | no (`ctx.hasUI` false) | not in the session API               | `status` → `answer` \*      |
 | Model per call              | no                     | yes                                  | `model` argument           |
+| Thinking per call           | no                     | provider-specific                    | `thinking` argument        |
 
 `pi -p` and `--mode json` set `ctx.hasUI = false`. A delegate started that way is fire-and-forget
 by construction: it cannot raise a question, and you cannot redirect it.
@@ -225,13 +226,14 @@ running agent, `follow_up` starts a new turn on a finished one.
 
 ## Fanning out
 
-`spawn_batch` starts a whole batch in one call. Tasks inherit the batch-level `model`, `cwd`,
-`tools` and `extensions`, and override them individually where they need to:
+`spawn_batch` starts a whole batch in one call. Tasks inherit the batch-level `model`, `thinking`,
+`cwd`, `tools` and `extensions`, and override them individually where they need to:
 
 ```json
 {
   "idPrefix": "audit",
   "model": "opencode-go/deepseek-v4-flash",
+  "thinking": "low",
   "cwd": "/repo",
   "tools": ["ls"],
   "tasks": [
@@ -286,6 +288,20 @@ Two switches change that:
 | `PI_DELEGATE_IGNORE_SCOPE=1` | Drop scoping altogether. Every authenticated model is usable. |
 
 Call `models` to see what is actually reachable under whichever setting is in force.
+
+`PI_DELEGATE_MODEL_ALLOWLIST` adds an MCP-only exact-ID boundary after pi's own scope. It does not
+change interactive pi's `enabledModels` or model picker. This is useful when the main pi installation
+has a broad catalog but the MCP host should only route delegates to a small approved pool:
+
+```json
+"env": {
+  "PI_DELEGATE_MODEL_ALLOWLIST": "litellm-local/or-deepseek-v4-flash-latest,litellm-local/or-gpt-5.6-luna"
+}
+```
+
+Every launch may also pass `thinking`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
+Omit it to let pi apply its configured/default level. Responses and status snapshots report the
+effective level after pi clamps it to the selected model's capabilities.
 
 ## Status line
 
@@ -385,12 +401,14 @@ on by default. It also costs real startup time, which is why it is off unless as
 | Env var                       | Default          | Meaning                                                                  |
 | ----------------------------- | ---------------- | ------------------------------------------------------------------------ |
 | `PI_DELEGATE_MODEL`           | pi's own default | Model used when a call omits `model`                                     |
+| `PI_DELEGATE_MODEL_ALLOWLIST` | unset            | Exact `provider/modelId` values this MCP server may delegate to           |
 | `PI_DELEGATE_ALLOW_TOOLS`     | unset            | Comma list of extra tools to permit, e.g. `bash`                         |
 | `PI_DELEGATE_ALLOW_WRITE`     | unset            | `1` permits every tool                                                   |
 | `PI_DELEGATE_HISTORY`         | `50`             | Finished sessions kept for review                                        |
 | `PI_DELEGATE_TRACE_ARGS`      | `400`            | Max chars of tool arguments kept in the trace                            |
 | `PI_DELEGATE_TRACE_RESULT`    | `600`            | Max chars of tool results kept in the trace                              |
 | `PI_DELEGATE_BATCH_MAX`       | `10`             | Ceiling on tasks per `spawn_batch` call                                  |
+| `PI_DELEGATE_MAX_CONCURRENT`  | `2`              | Hard ceiling across all active delegates in this server process          |
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Where status-line state is published                                     |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |

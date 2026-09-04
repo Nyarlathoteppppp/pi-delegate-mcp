@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { HISTORY_LIMIT } from "../config.js";
-import { all, forget, must } from "../registry.js";
+import { all, assertCapacity, forget, must } from "../registry.js";
 import { gated, json } from "./shared.js";
 
 export function registerControl(server: McpServer): void {
@@ -65,7 +65,12 @@ export function registerControl(server: McpServer): void {
         prompt: z.string().describe("The next turn for this delegate"),
       },
     },
-    async ({ sessionId, prompt }) => json(must(sessionId).followUp(prompt)),
+    async ({ sessionId, prompt }) => {
+      const worker = must(sessionId);
+      // Let the worker produce the more useful "use steer" error for a live session.
+      if (worker.state !== "running" && worker.state !== "starting") assertCapacity();
+      return json(worker.followUp(prompt));
+    },
   );
 
   gated(
@@ -100,6 +105,7 @@ export function registerControl(server: McpServer): void {
             label: s.label,
             state: s.state,
             model: s.model,
+            thinking: s.thinking,
             turns: s.turns,
             startedAt: s.startedAt,
             finishedAt: s.finishedAt,
