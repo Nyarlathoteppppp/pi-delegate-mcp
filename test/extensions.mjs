@@ -12,18 +12,18 @@ const M = "opencode-go/deepseek-v4-flash";
 
 console.log("[1] extensions off: web_search must stay blocked by the allowlist");
 let c = await mk();
-let r = await raw(c, "spawn", { prompt: "x", model: M, extensions: true, tools: ["read", "web_search"] });
+let r = await raw(c, "spawn", { prompt: "x", model: M, cwd: "/tmp", extensions: true, tools: ["read", "web_search"] });
 console.log("   ", r.isError ? "REFUSED: " + r.content[0].text.slice(0, 95) : "ALLOWED (!!)");
 await c.close();
 
 console.log("\n[2] allowed on the server, extensions ON: does web_search go active?");
 c = await mk({ PI_DELEGATE_ALLOW_TOOLS: "web_search,fetch_content" });
-let s = await call(c, "spawn", { id: "ext-on", prompt: "Reply only: X", model: M,
+let s = await call(c, "spawn", { id: "ext-on", prompt: "Reply only: X", model: M, cwd: "/tmp",
   extensions: true, tools: ["read", "grep", "find", "ls", "web_search", "fetch_content"] });
 console.log("    activeTools:", JSON.stringify(s.activeTools));
 
 console.log("\n[3] same allowlist, extensions OFF: the extension tools must vanish");
-s = await call(c, "spawn", { id: "ext-off", prompt: "Reply only: X", model: M,
+s = await call(c, "spawn", { id: "ext-off", prompt: "Reply only: X", model: M, cwd: "/tmp",
   extensions: false, tools: ["read", "grep", "find", "ls", "web_search", "fetch_content"] });
 console.log("    activeTools:", JSON.stringify(s.activeTools));
 await c.close(); process.exit(0);

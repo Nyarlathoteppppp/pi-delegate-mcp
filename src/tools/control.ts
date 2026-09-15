@@ -130,9 +130,8 @@ export function registerControl(server: McpServer): void {
     {
       description:
         "Send another prompt to a delegate that has already finished, keeping everything it read " +
-        "and said. Use this instead of spawning a fresh delegate and re-explaining the task: the " +
-        "session still holds its own context, which yours never had to absorb. Returns immediately; " +
-        "poll with `status` as usual. For a delegate that is still working, use `steer` instead.",
+        "and said. Turns and wall-clock already spent still count toward the original budget; " +
+        "follow_up is refused once that budget is exhausted. For a live session, use `steer`.",
       inputSchema: {
         sessionId: z.string(),
         prompt: z.string().describe("The next turn for this delegate"),

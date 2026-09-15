@@ -8,6 +8,7 @@ import {
   type CreateAgentSessionResult,
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR } from "../config.js";
+import { secretPathGuard } from "../secrets.js";
 import type {
   Notice,
   PiThinkingLevel,
@@ -133,21 +134,22 @@ export class PiWorker {
       cwd: this.cwd,
       agentDir: AGENT_DIR,
       noExtensions: !this.extensionsEnabled,
+      noSkills: true,
+      noContextFiles: true,
+      extensionFactories: [secretPathGuard(this.cwd)],
     });
 
-    // The loader is lazy: getExtensions() returns nothing until reload() has run, so
-    // without this `extensions: true` silently loads zero extensions and costs startup
-    // time for nothing. A failure is not fatal, since a delegate with none still works.
-    if (this.extensionsEnabled) {
-      try {
-        await resourceLoader.reload();
-      } catch (e) {
-        this.notices.push({
-          type: "warning",
-          message: `extensions failed to load: ${message(e)}`,
-          at: new Date().toISOString(),
-        });
-      }
+    // The loader is lazy: getExtensions() returns nothing until reload() has run.
+    // Always reload so the inline secret-path guard is installed even when third-party
+    // extensions stay off. A failure is not fatal.
+    try {
+      await resourceLoader.reload();
+    } catch (e) {
+      this.notices.push({
+        type: "warning",
+        message: `resource loader failed: ${message(e)}`,
+        at: new Date().toISOString(),
+      });
     }
 
     const { session } = await createAgentSession({
@@ -187,9 +189,10 @@ export class PiWorker {
     this.runTurns = 0;
     this.finishSteerSent = false;
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     this.deadlineTimer = setTimeout(() => {
       void this.abort("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
-    }, this.maxDurationMs);
+    }, remainingMs);
     this.run = session
       .prompt(prompt)
       .then(() => session.waitForIdle())
@@ -223,6 +226,16 @@ export class PiWorker {
       throw new Error(
         `Session ${this.id} is ${this.state}. Use \`steer\` to redirect a delegate that is still working.`,
       );
+    if (this.turns >= this.maxTurns) {
+      throw new Error(
+        `Session ${this.id} already used ${this.turns}/${this.maxTurns} turns. Spawn a new delegate instead of follow_up.`,
+      );
+    }
+    if (this.elapsedMs() >= this.maxDurationMs) {
+      throw new Error(
+        `Session ${this.id} already reached its ${this.maxDurationMs}ms deadline. Spawn a new delegate instead of follow_up.`,
+      );
+    }
     this.track(this.session, prompt);
     this.onChange?.();
     return { sessionId: this.id, state: this.state, turnsSoFar: this.turns };
@@ -240,16 +253,16 @@ export class PiWorker {
         // A tool-free turn is normally the final answer. Budget only an agent that is
         // continuing the tool loop, so a conclusion at the limit is not thrown away.
         if (this.state !== "running" || ev.toolResults.length === 0) break;
-        if (this.runTurns >= this.maxTurns) {
-          void this.abort("max_turns", { limit: this.maxTurns, observed: this.runTurns });
+        if (this.turns >= this.maxTurns) {
+          void this.abort("max_turns", { limit: this.maxTurns, observed: this.turns });
           break;
         }
         const finishAt = Math.max(1, Math.floor(this.maxTurns * 0.75));
-        if (!this.finishSteerSent && this.runTurns >= finishAt && this.questions.size === 0) {
+        if (!this.finishSteerSent && this.turns >= finishAt && this.questions.size === 0) {
           this.finishSteerSent = true;
           this.notices.push({
             type: "warning",
-            message: `turn budget ${this.runTurns}/${this.maxTurns}: requested final answer without more tools`,
+            message: `turn budget ${this.turns}/${this.maxTurns}: requested final answer without more tools`,
             at: new Date().toISOString(),
           });
           void this.session?.steer(FINALIZE_PROMPT).catch((e: unknown) => {

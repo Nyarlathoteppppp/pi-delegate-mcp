@@ -104,8 +104,8 @@ export function registerInit(server: McpServer): void {
         },
 
         howToDelegate: [
-          "1. `spawn` for real work. It returns a sessionId immediately, nothing blocks. Give it your " +
-            'own `id` and a `label` so you can trace it later, e.g. id: "search-audit-01".',
+          "1. `spawn` for real work. It returns a sessionId immediately, nothing blocks. Give it an " +
+            "absolute `cwd` (required), plus your own `id` and a `label` so you can trace it later.",
           "2. `status` to poll. Read `state`, `turns`, and `toolCalls` (the ordered tool trace). " +
             "Add `verbose: true` to see tool results.",
           "3. `wait` to pause up to 55 seconds for progress or completion. Cancelling a wait does " +
@@ -115,8 +115,8 @@ export function registerInit(server: McpServer): void {
           "5. `answer` when `status` shows a non-empty `questions` array, which blocks the delegate " +
             "until you reply. Only extensions can ask, so this never fires unless you spawned with " +
             "`extensions: true`.",
-          "6. `follow_up` to give a finished delegate another turn. It still remembers everything it " +
-            "read, so this beats spawning a fresh one and re-explaining the task.",
+          "6. `follow_up` to give a finished delegate another turn on the same session. Turns and " +
+            "wall-clock already spent still count toward the original budget.",
           "7. `sessions` lists everything including finished runs; `forget` drops one.",
           "`spawn_batch` fans out several delegates at once. `run` blocks until done, so keep it for " +
             "questions that finish in under a minute.",
@@ -127,7 +127,9 @@ export function registerInit(server: McpServer): void {
           "Every delegate has a turn budget and wall-clock deadline. Near the turn limit it is " +
             "steered once to conclude; at the limit it is aborted with a termination reason.",
           "The delegate cannot see your conversation. Put every fact it needs into `prompt`.",
-          "It reads AGENTS.md and CLAUDE.md from `cwd`, so point `cwd` at the right repository.",
+          "cwd is required, absolute, and must not be `/` or `$HOME`. Relative paths are refused.",
+          "Delegates do not load skills or AGENTS.md/CLAUDE.md. Credential paths " +
+            "(~/.codex, ~/.ssh, ~/.aws, ~/.gnupg, ~/.claude, auth.json, **/.env) are blocked.",
           "pi extensions are off by default because they add startup cost and can misbehave. " +
             "Pass `extensions: true` only if the delegate needs them.",
         ],

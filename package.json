@@ -25,7 +25,7 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test:ci": "npm run build && node test/launch.mjs node dist/index.js && node test/policy.mjs && node test/lifecycle.mjs",
-    "test": "for t in guard perm id scope init nopi smoke trace model; do echo \"== $t\"; node test/$t.mjs || exit 1; done",
+    "test": "for t in guard perm id scope init nopi smoke trace model workspace; do echo \"== $t\"; node test/$t.mjs || exit 1; done",
     "prepublishOnly": "npm run test:ci"
   },
   "engines": {
@@ -58,7 +58,7 @@
     "codex"
   ],
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.3",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },

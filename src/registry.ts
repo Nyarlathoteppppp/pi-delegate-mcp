@@ -7,6 +7,7 @@ import {
 } from "./config.js";
 import { pickTools } from "./permissions.js";
 import { PiWorker } from "./pi/worker.js";
+import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
 
@@ -93,7 +94,7 @@ export async function launch(req: LaunchRequest, capacityChecked = false): Promi
   const worker = new PiWorker({
     id: claimId(req.id),
     label: req.label,
-    cwd: req.cwd || process.cwd(),
+    cwd: await resolveDelegateCwd(req.cwd),
     model: req.model || DEFAULT_MODEL,
     thinking: req.thinking,
     tools: pickTools(req.tools),

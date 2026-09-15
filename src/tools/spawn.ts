@@ -14,6 +14,7 @@ import { PERMITTED, pickTools, READ_ONLY_TOOLS } from "../permissions.js";
 import { resolveModel } from "../pi/models.js";
 import { message } from "../pi/worker.js";
 import { assertCapacity, claimId, evictHistory, launch } from "../registry.js";
+import { resolveDelegateCwd } from "../workspace.js";
 import { gated, json } from "./shared.js";
 
 export function bindCancellation(
@@ -35,7 +36,7 @@ const spawnShape = {
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional()
     .describe("Explicit pi thinking level. Omit to use pi's configured/default level."),
-  cwd: z.string().optional().describe("Working directory for the agent"),
+  cwd: z.string().describe("Absolute working directory for the agent. Required; not the MCP process cwd."),
   id: z
     .string()
     .optional()
@@ -180,7 +181,8 @@ export function registerSpawn(server: McpServer): void {
         }
         try {
           pickTools(t.tools);
-          await resolveModel(t.model || DEFAULT_MODEL, t.cwd || process.cwd());
+          const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
+          await resolveModel(t.model || DEFAULT_MODEL, taskCwd);
         } catch (e) {
           throw new Error(`tasks[${i}]${t.id ? ` (${t.id})` : ""}: ${message(e)}`);
         }
