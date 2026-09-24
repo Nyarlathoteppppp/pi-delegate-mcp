@@ -85,6 +85,8 @@ export class PiWorker {
   private deadlineTimer: NodeJS.Timeout | undefined;
   private runTurns = 0;
   private finishSteerSent = false;
+  /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
+  private providerError: string | undefined;
 
   constructor({
     id,
@@ -188,6 +190,7 @@ export class PiWorker {
     this.termination = undefined;
     this.runTurns = 0;
     this.finishSteerSent = false;
+    this.providerError = undefined;
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     this.deadlineTimer = setTimeout(() => {
@@ -197,7 +200,11 @@ export class PiWorker {
       .prompt(prompt)
       .then(() => session.waitForIdle())
       .then(() => {
-        this.state = this.state === "aborted" ? "aborted" : "done";
+        if (this.state === "aborted") return;
+        if (this.providerError !== undefined) {
+          this.state = "error";
+          this.error = this.providerError;
+        } else this.state = "done";
       })
       .catch((e: unknown) => {
         if (this.state !== "aborted") {
@@ -305,6 +312,13 @@ export class PiWorker {
         }
         break;
       }
+
+      case "message_end":
+        // Only the latest assistant message counts, so a turn that recovers after a retry is not failed.
+        if (ev.message.role === "assistant")
+          this.providerError =
+            ev.message.stopReason === "error" ? ev.message.errorMessage || "provider error" : undefined;
+        break;
 
       case "message_update":
         if (ev.assistantMessageEvent?.type === "text_end")
