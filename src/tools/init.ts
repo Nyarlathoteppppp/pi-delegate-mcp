@@ -9,6 +9,7 @@ import {
   MAX_DURATION_MS,
   MAX_TURNS,
   MODEL_ALLOWLIST,
+  MODEL_DENYLIST,
   RUN_DEFAULT_DURATION_MS,
   RUN_DEFAULT_TURNS,
   SPAWN_DEFAULT_DURATION_MS,
@@ -74,9 +75,14 @@ export function registerInit(server: McpServer): void {
         models: {
           defaultWhenYouOmitModel: DEFAULT_MODEL ?? "(pi's own configured default)",
           delegateAllowlist: MODEL_ALLOWLIST.size ? [...MODEL_ALLOWLIST] : "not set",
+          delegateDenylist: MODEL_DENYLIST.size ? [...MODEL_DENYLIST] : "not set",
           format: 'Pass "provider/modelId". An unresolvable name is a hard error, never a silent fallback.',
           scoped: MODEL_ALLOWLIST.size
             ? "Only models in PI_DELEGATE_MODEL_ALLOWLIST that also pass pi's own scope may be used."
+            : MODEL_DENYLIST.size && !scope
+            ? "Every authenticated pi model is usable except models matching PI_DELEGATE_MODEL_DENYLIST."
+            : MODEL_DENYLIST.size
+            ? "Models matching PI_DELEGATE_MODEL_DENYLIST are excluded; the remaining list also follows pi's own scope."
             : scope
             ? "Only the models below may be used. Anything else is a hard error."
             : "pi has no enabledModels set, so every configured model is usable.",

@@ -56,6 +56,14 @@ export const MODEL_ALLOWLIST = new Set(
     .filter(Boolean),
 );
 
+/** Optional delegate-only denylist. Supports exact model refs and `*` wildcards. */
+export const MODEL_DENYLIST = new Set(
+  (process.env.PI_DELEGATE_MODEL_DENYLIST || "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean),
+);
+
 /** Ignore pi's enabledModels scope entirely. */
 export const IGNORE_SCOPE = process.env.PI_DELEGATE_IGNORE_SCOPE === "1";
 

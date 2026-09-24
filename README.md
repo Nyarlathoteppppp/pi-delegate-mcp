@@ -296,7 +296,18 @@ has a broad catalog but the MCP host should only route delegates to a small appr
 
 ```json
 "env": {
-  "PI_DELEGATE_MODEL_ALLOWLIST": "litellm-local/or-deepseek-v4-flash-latest,litellm-local/or-gpt-5.6-luna"
+  "PI_DELEGATE_MODEL_ALLOWLIST": "litellm-local/deepseek-flash,litellm-local/or-gpt-5.6-luna"
+}
+```
+
+`PI_DELEGATE_MODEL_DENYLIST` excludes exact model refs or `*` patterns from the delegate catalog.
+When combined with `PI_DELEGATE_IGNORE_SCOPE=1` and no allowlist, the server follows every model
+available from pi's authenticated providers except the matching exclusions:
+
+```json
+"env": {
+  "PI_DELEGATE_IGNORE_SCOPE": "1",
+  "PI_DELEGATE_MODEL_DENYLIST": "anthropic/*,openai-codex/*,dragon/grok-4.6"
 }
 ```
 
@@ -404,6 +415,7 @@ on by default. It also costs real startup time, which is why it is off unless as
 | ----------------------------- | ---------------- | ------------------------------------------------------------------------ |
 | `PI_DELEGATE_MODEL`           | pi's own default | Model used when a call omits `model`                                     |
 | `PI_DELEGATE_MODEL_ALLOWLIST` | unset            | Exact `provider/modelId` values this MCP server may delegate to           |
+| `PI_DELEGATE_MODEL_DENYLIST`  | unset            | Exact refs or `*` patterns excluded from the delegate catalog              |
 | `PI_DELEGATE_ALLOW_TOOLS`     | unset            | Comma list of extra tools to permit, e.g. `bash`                         |
 | `PI_DELEGATE_ALLOW_WRITE`     | unset            | `1` permits every tool                                                   |
 | `PI_DELEGATE_HISTORY`         | `50`             | Finished sessions kept for review                                        |

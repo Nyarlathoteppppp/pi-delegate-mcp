@@ -1,6 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_DIR, IGNORE_SCOPE, MODEL_ALLOWLIST, STRICT_SCOPE } from "../config.js";
+import {
+  AGENT_DIR,
+  IGNORE_SCOPE,
+  MODEL_ALLOWLIST,
+  MODEL_DENYLIST,
+  STRICT_SCOPE,
+} from "../config.js";
 import type { ModelScope, PiThinkingLevel } from "../types.js";
 import { getRuntime, type PiModel } from "./runtime.js";
 
@@ -35,12 +41,28 @@ export function modelScope(cwd?: string): ModelScope | undefined {
 
 export function inScope(scope: ModelScope | undefined, provider: string, id: string): boolean {
   if (!scope) return true;
-  return scope.customProviders.has(provider) || scope.enabled.has(`${provider}/${id}`);
+  const ref = `${provider}/${id}`;
+  // enabledModels entries may be globs ("xai/*"), same as pi's own scoped-models matching.
+  return scope.customProviders.has(provider) || [...scope.enabled].some((p) => matchesModelPattern(p, ref));
 }
 
 /** A second, MCP-only boundary that never changes pi's interactive model scope. */
 export function inDelegateAllowlist(provider: string, id: string): boolean {
   return MODEL_ALLOWLIST.size === 0 || MODEL_ALLOWLIST.has(`${provider}/${id}`);
+}
+
+function matchesModelPattern(pattern: string, ref: string): boolean {
+  if (!pattern.includes("*")) return pattern === ref;
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`).test(ref);
+}
+
+export function inDelegateDenylist(provider: string, id: string): boolean {
+  const ref = `${provider}/${id}`;
+  return [...MODEL_DENYLIST].some((pattern) => matchesModelPattern(pattern, ref));
 }
 
 export interface ScopedModel {
@@ -74,7 +96,8 @@ export async function scopedModels(cwd?: string): Promise<ScopedModel[]> {
   return available
     .map((m) => ({ provider: m.provider, id: m.id, ref: `${m.provider}/${m.id}` }))
     .filter((m) => inScope(scope, m.provider, m.id))
-    .filter((m) => inDelegateAllowlist(m.provider, m.id));
+    .filter((m) => inDelegateAllowlist(m.provider, m.id))
+    .filter((m) => !inDelegateDenylist(m.provider, m.id));
 }
 
 export interface Health {
@@ -112,6 +135,9 @@ export async function preflight(cwd?: string): Promise<Health> {
       MODEL_ALLOWLIST.size
         ? `No usable model intersects PI_DELEGATE_MODEL_ALLOWLIST ` +
           `[${[...MODEL_ALLOWLIST].join(", ")}]. Check exact IDs with pi --list-models and authentication.`
+        : MODEL_DENYLIST.size
+        ? `No usable model remains after PI_DELEGATE_MODEL_DENYLIST ` +
+          `[${[...MODEL_DENYLIST].join(", ")}]. Check the exclusions and pi authentication.`
         : scope
         ? `No usable model. pi's enabledModels scope [${[...scope.enabled].join(", ")}] does not ` +
           `intersect any authenticated provider. Widen it via pi's /scoped-models, log in to the ` +
@@ -147,6 +173,13 @@ export async function resolveModel(spec: string | undefined, cwd?: string): Prom
     throw new Error(
       `Model ${model.provider}/${model.id} is blocked by PI_DELEGATE_MODEL_ALLOWLIST. ` +
         `Allowed delegates: ${[...MODEL_ALLOWLIST].join(", ")}.`,
+    );
+  }
+
+  if (inDelegateDenylist(model.provider, model.id)) {
+    throw new Error(
+      `Model ${model.provider}/${model.id} is blocked by PI_DELEGATE_MODEL_DENYLIST. ` +
+        `Excluded patterns: ${[...MODEL_DENYLIST].join(", ")}.`,
     );
   }
 
