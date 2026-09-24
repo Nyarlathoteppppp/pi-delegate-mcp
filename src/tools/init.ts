@@ -104,7 +104,7 @@ export function registerInit(server: McpServer): void {
                 byProvider,
                 note:
                   `${hits.length} models is too many to list. Narrow it with the \`models\` argument, ` +
-                  "or set pi's enabledModels so this server only offers what you actually intend to use.",
+                  "then page through results with offset and limit.",
               }
             : { available: hits }),
         },

@@ -10,20 +10,25 @@ export function registerModels(server: McpServer): void {
     "models",
     {
       description:
-        "List models this delegate may use after applying pi's scope and delegate model filters. " +
-        "Use to pick a `model` value.",
+        "List models this delegate may use from pi's available providers after model filters. " +
+        "Use `filter` to find a provider or model, and `offset`/`limit` to page through long lists.",
       inputSchema: {
         filter: z.string().optional(),
         cwd: z.string().optional().describe("Picks up a project-local pi model scope"),
+        offset: z.number().int().min(0).optional().describe("First matching model index to return"),
+        limit: z.number().int().min(1).max(200).optional().describe("Page size, at most 200"),
       },
     },
-    async ({ filter, cwd }) => {
+    async ({ filter, cwd, offset = 0, limit = 200 }) => {
       const all = (await scopedModels(cwd)).map((m) => m.ref);
       const hits = filter ? all.filter((s) => s.toLowerCase().includes(filter.toLowerCase())) : all;
+      const models = hits.slice(offset, offset + limit);
       return json({
         count: hits.length,
+        offset,
+        nextOffset: offset + models.length < hits.length ? offset + models.length : null,
         scoped: Boolean(modelScope(cwd)) || MODEL_ALLOWLIST.size > 0 || MODEL_DENYLIST.size > 0,
-        models: hits.slice(0, 200),
+        models,
       });
     },
   );

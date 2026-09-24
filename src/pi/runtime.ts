@@ -1,4 +1,9 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
+import {
+  createAgentSessionServices,
+  type ModelRuntime,
+} from "@earendil-works/pi-coding-agent";
+import { AGENT_DIR } from "../config.js";
 
 /**
  * pi's model runtime is expensive to build and safe to share, so every delegate on this
@@ -7,7 +12,22 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 let runtimePromise: Promise<ModelRuntime> | undefined;
 
 export function getRuntime(): Promise<ModelRuntime> {
-  runtimePromise ??= ModelRuntime.create();
+  runtimePromise ??= createAgentSessionServices({
+    cwd: process.cwd(),
+    agentDir: AGENT_DIR,
+    resourceLoaderOptions: {
+      // Load only the provider extension Pi needs for Antigravity models. Loading every
+      // user extension here would run unrelated extension setup in the MCP server.
+      additionalExtensionPaths: [
+        join(AGENT_DIR, "npm", "node_modules", "pi-antigravity", "src", "index.ts"),
+      ],
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    },
+  }).then((services) => services.modelRuntime);
   return runtimePromise;
 }
 
