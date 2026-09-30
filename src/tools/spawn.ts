@@ -11,9 +11,9 @@ import {
   RUN_DEFAULT_TURNS,
 } from "../config.js";
 import { PERMITTED, pickTools, READ_ONLY_TOOLS } from "../permissions.js";
-import { resolveModel } from "../pi/models.js";
+import { assertThinkingSupported, resolveModel } from "../pi/models.js";
 import { message } from "../pi/worker.js";
-import { assertCapacity, claimId, evictHistory, launch } from "../registry.js";
+import { claimId, evictHistory, launch, launchBatch } from "../registry.js";
 import { resolveDelegateCwd } from "../workspace.js";
 import { gated, json } from "./shared.js";
 
@@ -49,7 +49,7 @@ const spawnShape = {
     .array(z.string())
     .optional()
     .describe(
-      `Tool allowlist for this delegate. Default: ${READ_ONLY_TOOLS.join(", ")}. ` +
+      `Tool allowlist for this delegate. Omit for ${READ_ONLY_TOOLS.join(", ")}; [] disables all tools. ` +
         `Permitted on this server: ${ALLOW_ALL ? "any" : [...PERMITTED].join(", ")}.`,
     ),
   extensions: z
@@ -182,14 +182,12 @@ export function registerSpawn(server: McpServer): void {
         try {
           pickTools(t.tools);
           const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
-          await resolveModel(t.model || DEFAULT_MODEL, taskCwd);
+          const taskModel = await resolveModel(t.model || DEFAULT_MODEL, taskCwd);
+          assertThinkingSupported(taskModel, t.thinking);
         } catch (e) {
           throw new Error(`tasks[${i}]${t.id ? ` (${t.id})` : ""}: ${message(e)}`);
         }
       }
-
-      // Check capacity once for the complete batch so a rejected fan-out starts nothing.
-      assertCapacity(merged.length);
 
       const started: Array<{
         index: number;
@@ -201,24 +199,23 @@ export function registerSpawn(server: McpServer): void {
         limits: { maxTurns: number; maxDurationMs: number };
       }> = [];
       const failures: Array<{ index: number; id?: string; error: string }> = [];
-      await Promise.all(
-        merged.map(async (t, index) => {
-          try {
-            const w = await launch(t, true);
-            started.push({
-              index,
-              sessionId: w.id,
-              label: w.label,
-              state: w.state,
-              model: w.model,
-              thinking: w.thinking,
-              limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
-            });
-          } catch (e) {
-            failures.push({ index, id: t.id, error: message(e) });
-          }
-        }),
-      );
+      const results = await launchBatch(merged);
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          const w = result.value;
+          started.push({
+            index,
+            sessionId: w.id,
+            label: w.label,
+            state: w.state,
+            model: w.model,
+            thinking: w.thinking,
+            limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
+          });
+        } else {
+          failures.push({ index, id: merged[index]?.id, error: message(result.reason) });
+        }
+      });
       const byIndex = (a: { index: number }, b: { index: number }) => a.index - b.index;
       started.sort(byIndex);
       failures.sort(byIndex);

@@ -10,6 +10,13 @@ const SENSITIVE_FILES = [
   ["litellm-gateway", ".env"],
 ] as const;
 
+/** The same secret rules must apply to files visited inside a recursive search. */
+export const SECRET_SEARCH_EXCLUDES = [
+  "**/.env", "**/.env/**",
+  ...SENSITIVE_DIRS.flatMap((name) => [`**/${name}`, `**/${name}/**`]),
+  ...SENSITIVE_FILES.map((segments) => `**/${segments.join("/")}`),
+];
+
 function isInside(parent: string, child: string): boolean {
   const rel = relative(parent, child);
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(".."));

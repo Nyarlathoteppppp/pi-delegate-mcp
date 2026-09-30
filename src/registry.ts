@@ -19,7 +19,7 @@ const sessions = new Map<string, PiWorker>();
 export const all = (): PiWorker[] => [...sessions.values()];
 export const count = (): number => sessions.size;
 export const activeCount = (): number =>
-  all().filter((worker) => worker.state === "starting" || worker.state === "running").length;
+  all().filter((worker) => worker.isActive).length;
 
 export function assertCapacity(additional = 1): void {
   const active = activeCount();
@@ -60,14 +60,14 @@ export function forget(id: string): void {
 export async function abortAll(reason: TerminationReason = "server_shutdown"): Promise<void> {
   await Promise.all(
     all()
-      .filter((worker) => worker.state === "starting" || worker.state === "running")
+      .filter((worker) => worker.isActive)
       .map((worker) => worker.abort(reason)),
   );
 }
 
 /** Drop the oldest finished sessions once history is over budget. Running ones are safe. */
 export function evictHistory(): void {
-  const done = all().filter((w) => w.state !== "running" && w.state !== "starting");
+  const done = all().filter((w) => !w.isActive);
   while (sessions.size > HISTORY_LIMIT && done.length) {
     const oldest = done.shift();
     if (!oldest) break;
@@ -89,25 +89,30 @@ export interface LaunchRequest {
   maxDurationMs?: number | undefined;
 }
 
-export async function launch(req: LaunchRequest, capacityChecked = false): Promise<PiWorker> {
-  if (!capacityChecked) assertCapacity();
-  const worker = new PiWorker({
+async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: string; tools: string[] }> {
+  return { ...req, cwd: await resolveDelegateCwd(req.cwd), tools: pickTools(req.tools) };
+}
+
+function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWorker {
+  return new PiWorker({
     id: claimId(req.id),
     label: req.label,
-    cwd: await resolveDelegateCwd(req.cwd),
+    cwd: req.cwd,
     model: req.model || DEFAULT_MODEL,
     thinking: req.thinking,
-    tools: pickTools(req.tools),
+    tools: req.tools,
     extensions: req.extensions ?? false,
     maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
     maxDurationMs: req.maxDurationMs ?? SPAWN_DEFAULT_DURATION_MS,
   });
-  worker.onChange = () => publish(all());
-  sessions.set(worker.id, worker);
+}
+
+async function startWorker(worker: PiWorker, prompt: string): Promise<PiWorker> {
   try {
-    await worker.start(req.prompt);
+    await worker.start(prompt);
   } catch (e) {
     // A session that never started must not occupy its id.
+    worker.dispose();
     sessions.delete(worker.id);
     publish(all());
     throw e;
@@ -115,4 +120,34 @@ export async function launch(req: LaunchRequest, capacityChecked = false): Promi
   evictHistory();
   publish(all());
   return worker;
+}
+
+/** Reserve capacity and identity together, with no await between checking and insertion. */
+export async function launch(req: LaunchRequest): Promise<PiWorker> {
+  const prepared = await prepare(req);
+  assertCapacity();
+  const worker = makeWorker(prepared);
+  worker.onChange = () => publish(all());
+  sessions.set(worker.id, worker);
+  return startWorker(worker, req.prompt);
+}
+
+/** Reserve the entire batch before starting any worker or allowing another request to interleave. */
+export async function launchBatch(reqs: LaunchRequest[]): Promise<PromiseSettledResult<PiWorker>[]> {
+  const prepared = await Promise.all(reqs.map(prepare));
+  assertCapacity(prepared.length);
+  const seen = new Set<string>();
+  for (const req of prepared) {
+    if (req.id !== undefined) {
+      claimId(req.id);
+      if (seen.has(req.id)) throw new Error(`Batch reuses session id "${req.id}".`);
+      seen.add(req.id);
+    }
+  }
+  const workers = prepared.map(makeWorker);
+  for (const worker of workers) {
+    worker.onChange = () => publish(all());
+    sessions.set(worker.id, worker);
+  }
+  return Promise.allSettled(workers.map((worker, i) => startWorker(worker, prepared[i]!.prompt)));
 }

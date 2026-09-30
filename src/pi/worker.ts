@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   createAgentSession,
   DefaultResourceLoader,
+  defineTool,
   SessionManager,
   type AgentSessionEvent,
   type ExtensionUIContext,
@@ -9,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR } from "../config.js";
 import { secretPathGuard } from "../secrets.js";
+import { createProtectedGrepTool } from "./search.js";
 import type {
   Notice,
   PiThinkingLevel,
@@ -87,6 +89,21 @@ export class PiWorker {
   private finishSteerSent = false;
   /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
   private providerError: string | undefined;
+  private abortPromise: Promise<void> | undefined;
+
+  /** Cancelling a session does not release its concurrency slot until the SDK becomes idle. */
+  get isActive(): boolean {
+    return this.state === "starting" || this.state === "running" || this.abortPromise !== undefined;
+  }
+
+  private isAborted(): boolean {
+    return this.state === "aborted";
+  }
+
+  private clearQuestions(): void {
+    for (const q of this.questions.values()) q.resolve(undefined);
+    this.questions.clear();
+  }
 
   constructor({
     id,
@@ -114,6 +131,7 @@ export class PiWorker {
   private uiContext(): ExtensionUIContext {
     return createUiContext({
       ask: (kind, title, detail, options) => {
+        if (this.isAborted()) return Promise.resolve(undefined);
         const q = new Question(kind, title, detail, options);
         this.questions.set(q.id, q);
         this.onChange?.();
@@ -127,6 +145,7 @@ export class PiWorker {
 
   async start(prompt: string): Promise<this> {
     const model = await resolveModel(this.modelSpec, this.cwd);
+    if (this.isAborted()) return this;
 
     assertThinkingSupported(model, this.thinkingSpec);
 
@@ -143,16 +162,9 @@ export class PiWorker {
 
     // The loader is lazy: getExtensions() returns nothing until reload() has run.
     // Always reload so the inline secret-path guard is installed even when third-party
-    // extensions stay off. A failure is not fatal.
-    try {
-      await resourceLoader.reload();
-    } catch (e) {
-      this.notices.push({
-        type: "warning",
-        message: `resource loader failed: ${message(e)}`,
-        at: new Date().toISOString(),
-      });
-    }
+    // extensions stay off. Failure must not leave the secret guard uninstalled.
+    await resourceLoader.reload();
+    if (this.isAborted()) return this;
 
     const { session } = await createAgentSession({
       cwd: this.cwd,
@@ -161,19 +173,21 @@ export class PiWorker {
       thinkingLevel: this.thinkingSpec,
       sessionManager: SessionManager.inMemory(),
       tools: this.toolNames,
+      customTools: this.toolNames.includes("grep") ? [defineTool(createProtectedGrepTool(this.cwd))] : [],
       resourceLoader,
     });
     this.session = session;
+    if (this.isAborted()) {
+      session.dispose();
+      return this;
+    }
     this.model = model ? `${model.provider}/${model.id}` : "(pi default)";
     this.thinking = session.thinkingLevel;
     this.activeTools = session.getActiveToolNames();
 
     this.unsubscribe = session.subscribe((ev) => this.onEvent(ev));
-    try {
-      await session.bindExtensions({ uiContext: this.uiContext(), mode: "rpc" });
-    } catch {
-      // Extensions are optional. A binding failure must not sink the run.
-    }
+    await session.bindExtensions({ uiContext: this.uiContext(), mode: "rpc" });
+    if (this.isAborted()) return this;
 
     this.track(session, prompt);
     return this;
@@ -186,6 +200,7 @@ export class PiWorker {
   private track(session: AgentSession, prompt: string): void {
     this.state = "running";
     this.error = undefined;
+    this.lastText = "";
     this.finishedAt = undefined;
     this.termination = undefined;
     this.runTurns = 0;
@@ -217,7 +232,7 @@ export class PiWorker {
         this.deadlineTimer = undefined;
         this.finishedAt = new Date().toISOString();
         // Unblock anything still waiting on an answer that will now never come.
-        for (const q of this.questions.values()) q.resolve(undefined);
+        this.clearQuestions();
         this.onChange?.();
       });
   }
@@ -229,7 +244,7 @@ export class PiWorker {
    */
   followUp(prompt: string): { sessionId: string; state: SessionState; turnsSoFar: number } {
     if (!this.session) throw new Error(`Session ${this.id} never started, nothing to follow up on.`);
-    if (this.state === "running" || this.state === "starting")
+    if (this.isActive)
       throw new Error(
         `Session ${this.id} is ${this.state}. Use \`steer\` to redirect a delegate that is still working.`,
       );
@@ -315,14 +330,22 @@ export class PiWorker {
 
       case "message_end":
         // Only the latest assistant message counts, so a turn that recovers after a retry is not failed.
-        if (ev.message.role === "assistant")
+        if (ev.message.role === "assistant") {
           this.providerError =
             ev.message.stopReason === "error" ? ev.message.errorMessage || "provider error" : undefined;
+          this.lastText = ev.message.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+        }
         break;
 
       case "message_update":
-        if (ev.assistantMessageEvent?.type === "text_end")
-          this.lastText = ev.assistantMessageEvent.content ?? this.lastText;
+        if (ev.assistantMessageEvent.type === "text_end" && ev.message.role === "assistant")
+          this.lastText = ev.message.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
         break;
     }
   }
@@ -359,8 +382,16 @@ export class PiWorker {
         at: new Date().toISOString(),
       };
     this.state = "aborted";
+    // Extension dialogs do not automatically observe the agent's abort signal.
+    this.clearQuestions();
     this.onChange?.();
-    await this.session?.abort().catch(NOOP);
+    this.abortPromise ??= (async () => {
+      await this.session?.abort().catch(NOOP);
+    })().finally(() => {
+      this.abortPromise = undefined;
+      this.onChange?.();
+    });
+    await this.abortPromise;
     return { aborted: true, termination: this.termination };
   }
 

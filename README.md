@@ -359,6 +359,11 @@ host pid disappears, so a host that dies without closing the transport leaves no
 Tools are locked to `read, grep, find, ls` at session construction. Anything else is refused
 before a session is even created.
 
+Omit `tools` to use those defaults. Pass `tools: []` to disable all tools for a delegate.
+Recursive `grep` excludes the credential paths covered by the secret-path guard, including
+`.env` and private configuration directories, even when searching their parent directory.
+The protected grep uses `rg` from the server's `PATH`.
+
 To widen that, name the extra tools on the server:
 
 ```json
@@ -469,13 +474,20 @@ prefer `auth.json` (run `pi` once and `/login`) over exporting keys in a shell p
 npm install
 npm run build       # tsc, src/*.ts -> dist/
 npm run typecheck   # tsc --noEmit, strict
-npm run test:ci     # offline: boots the server over stdio and lists its tools
-npm test            # full suite: needs a logged-in pi, makes real model calls
+npm test            # typecheck, build, offline regressions and local-provider integration
+npm run test:ci     # same suite, used by prepublishOnly
+PI_DELEGATE_MODEL=xai/grok-4.7 npm run test:live  # real provider call; consumes quota
 ```
 
-`test:ci` is what CI runs and what `prepublishOnly` gates on, because it needs no credentials and
-no network. `npm test` drives real delegates against real providers, so it costs money and only
-works where `pi` has been logged in.
+`npm test` and `test:ci` use temporary Pi configuration and a fake provider on loopback. They
+need no account credentials and make no external model calls. The suite covers concurrent
+reservations, duplicate IDs, cancellation during questions, complete replies, tool selection,
+recursive secret exclusion, status publication, and actual MCP-to-Pi SDK session calls.
+
+`test:live` is a separate opt-in smoke test. Set `PI_DELEGATE_MODEL` to the exact registered
+provider/model to test. It makes one tool-free completion and requires usable Pi credentials.
+Older diagnostic scripts remain available individually; some use historical model IDs and
+are not part of the offline suite.
 
 | Path                 | What lives there                                     |
 | -------------------- | ---------------------------------------------------- |

@@ -24,8 +24,9 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test:ci": "npm run build && node test/launch.mjs node dist/index.js && node test/policy.mjs && node test/lifecycle.mjs",
-    "test": "for t in guard perm id scope init nopi smoke trace model workspace; do echo \"== $t\"; node test/$t.mjs || exit 1; done",
+    "test:ci": "npm test",
+    "test": "npm run typecheck && npm run build && node test/offline.mjs",
+    "test:live": "npm run build && node test/live.mjs",
     "prepublishOnly": "npm run test:ci"
   },
   "engines": {

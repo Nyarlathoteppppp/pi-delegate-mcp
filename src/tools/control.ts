@@ -140,7 +140,7 @@ export function registerControl(server: McpServer): void {
     async ({ sessionId, prompt }) => {
       const worker = must(sessionId);
       // Let the worker produce the more useful "use steer" error for a live session.
-      if (worker.state !== "running" && worker.state !== "starting") assertCapacity();
+      if (!worker.isActive) assertCapacity();
       return json(worker.followUp(prompt));
     },
   );
@@ -199,7 +199,7 @@ export function registerControl(server: McpServer): void {
     },
     async ({ sessionId }) => {
       const w = must(sessionId);
-      if (w.state === "running" || w.state === "starting")
+      if (w.isActive)
         throw new Error(`Session ${sessionId} is still ${w.state}. Call abort first.`);
       w.dispose();
       forget(sessionId);
